@@ -8,8 +8,6 @@ import prody
 import mpi4py
 from mpi4py import MPI
 
-
-
 #Get MPI info
 comm = MPI.COMM_WORLD
 info = MPI.INFO_ENV
@@ -21,14 +19,14 @@ rank = comm.rank
 import h5py
 from h5py import h5s
 
-from h5py import h5p, h5fd
+from h5py import h5p, h5fd, h5f
 
 dxpl = h5p.create(h5p.DATASET_XFER)
 dxpl.set_dxpl_mpio(h5fd.MPIO_COLLECTIVE)
 
-fapl = h5p.create(h5p.FILE_ACCESS) 
-fapl.set_fapl_mpio(comm, info)
-fapl.set_alignment(0, 1048576) 
+#fapl = h5p.create(h5p.FILE_ACCESS)
+#fapl.set_fapl_mpio(comm, info)
+#fapl.set_alignment(0, 16384)
 
 #Init logging
 if rank == 0:
@@ -66,10 +64,9 @@ N = np.count_nonzero(pdb_struct)
 #Init storage for matrices
 Mfn = 'aff_rmsd_matrix.hdf5'
 #HDF5 file
-fid = h5f.create(MFn, h5f.ACC_TRUNC, fapl=fapl)
-
-Mf = h5py.File(fid) 
-#Mf = h5py.File(Mfn, 'w', driver='mpio', comm=comm)
+#fid = h5f.create(Mfn, h5f.ACC_TRUNC, fapl=fapl)
+#Mf = h5py.File(fid)
+Mf = h5py.File(Mfn, 'w', driver='mpio', comm=comm)
 #Table for RMSD
 M = Mf.create_dataset(
     'rmsd',
@@ -87,16 +84,16 @@ while j < N:
         logging.info('Processing column %d of %d' % (j, N))
     jj = j + 1
     tN = N - jj
-    if tN > 0:
-        tM = np.fromiter(
-            (calc(pdb_struct[i], pdb_struct[j]) for i in xrange(jj, N)),
-            dtype='float32')
+    tM = np.fromiter(
+        (calc(pdb_struct[i], pdb_struct[j]) for i in xrange(jj, N)),
+        dtype='float32')
 
-        ms = h5s.create_simple((N - jj,))
-        Ms.select_hyperslab((jj, j), (N - jj, 1))
-        M.id.write(ms, Ms, tM, dxpl=dxpl)
+    ms = h5s.create_simple((N - jj,))
+    Ms.select_hyperslab((jj, j), (N - jj, 1))
+    M.id.write(ms, Ms, tM, dxpl=dxpl)
+    #M.id.write(ms, Ms, tM)
 
-    j += NPROCS
+    j = j + NPROCS
 
 #Wait for all processes
 comm.Barrier()
@@ -109,4 +106,5 @@ if rank == 0:
 
 #Cleanup
 #Close matrix file
+#fid.close()
 Mf.close()
