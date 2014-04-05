@@ -15,7 +15,10 @@ from mpi4py import MPI
 
 import h5py
 from h5py import h5s
+from h5py import h5p, h5fd
 
+dxpl = h5p.create(h5p.DATASET_XFER)
+dxpl.set_dxpl_mpio(h5fd.MPIO_COLLECTIVE)
 
 def task(rk, l):
     b = rk * l
@@ -55,9 +58,9 @@ P = Bunch(params)
 
 if rank == 0:
     t0 = dt.datetime.now()
-    import cProfile, pstats, StringIO
-    pr = cProfile.Profile()
-    pr.enable()
+#    import cProfile, pstats, StringIO
+#    pr = cProfile.Profile()
+#    pr.enable()
 
     N, N1 = S.shape
 
@@ -139,6 +142,8 @@ z = - np.finfo(np.double).max
 tb, te = task(rank, P.l)
 
 for it in xrange(P.max_iter):
+    if rank == 0:
+        tit = dt.datetime.now()
 
     # Compute responsibilities
     for i in xrange(tb, te):
@@ -169,11 +174,11 @@ for it in xrange(P.max_iter):
         tRp = np.maximum(tR, 0)
         tRp[i] = tdR[i - tb]
 
-        R.id.write(ms, Rs, tR)
+        R.id.write(ms, Rs, tR, dxpl=dxpl)
         #R[i, :] = tR
 
         Rps.select_hyperslab((i, 0), (1, P.N))
-        Rp.id.write(ms, Rps, tRp)
+        Rp.id.write(ms, Rps, tRp, dxpl=dxpl)
         #Rp[i, :] = tRp
 
     comm.Barrier()
@@ -196,7 +201,7 @@ for it in xrange(P.max_iter):
 
         tA = (1 - P.damping) * tA + P.damping * tAold
 
-        A.id.write(ms, As, tA)
+        A.id.write(ms, As, tA, dxpl=dxpl)
         #A[:, j] = (1 - P.damping) * tA + P.damping * tAold
 
     K = 0
@@ -227,8 +232,6 @@ for it in xrange(P.max_iter):
 
         if rank == 0:
 
-            print 'It %d K %d' % (it, K)
-
             converged = (se == P.N)
 
             if (converged is True) and (K > 0):
@@ -239,6 +242,11 @@ for it in xrange(P.max_iter):
                 converged = False
 
         converged = comm.bcast(converged, root=0)
+
+    if rank == 0:
+        teit = dt.datetime.now()
+
+        print 'It %d K %d T %s' % (it, K, teit - tit)
 
     if converged is True:
         break
@@ -314,12 +322,12 @@ if rank == 0:
     t1 = dt.datetime.now()
     print I[:], C[:]
     print "APM time is %s" % (t1 - t0)
-    pr.disable()
-    s = StringIO.StringIO()
-    sortby = 'cumtime'
-    ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-    ps.print_stats()
-    print s.getvalue()
+    #pr.disable()
+    #s = StringIO.StringIO()
+    #sortby = 'cumtime'
+    #ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+    #ps.print_stats()
+    #print s.getvalue()
 
 Sf.close()
 TMf.close()

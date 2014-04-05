@@ -40,9 +40,9 @@ l = 0
 
 if rank == 0:
     t0 = dt.datetime.now()
-    import cProfile, pstats, StringIO
-    pr = cProfile.Profile()
-    pr.enable()
+#    import cProfile, pstats, StringIO
+#    pr = cProfile.Profile()
+#    pr.enable()
 
     N, N1 = RM.shape
 
@@ -55,7 +55,7 @@ if rank == 0:
     if r != 0:
         l = l
         N = N - r
-        print 'Truncating matrix to NxN to fit on %d procs' % NPROCS
+        print 'Truncating matrix to %dx%d to fit on %d procs' % (N, N, NPROCS)
 
     med = livestats.LiveStats()
     madd = np.vectorize(med.add)
@@ -112,6 +112,7 @@ for j in xrange(tb, te):
 #        print rank, 'Sent'
 
     if rank == 0:
+        print 'Processing row %d of %d' % ((j - tb) * NPROCS, N)
         madd(ttCM)
         for n in range(1, NPROCS):
             madd(comm.recv(source=n))
@@ -142,6 +143,7 @@ for i in xrange(tb, te):
     CMs.select_elements([(i, i)])
     CM.id.write(ms_e, CMs, tCM)
 
+comm.Barrier()
 
 if rank == 0:
 
@@ -149,13 +151,13 @@ if rank == 0:
 
     print 'Med', median
 
-    pr.disable()
+#    pr.disable()
     print 'NP', np.median(CM)
     print "Time is %s" % (t1 - t0)
-    s = StringIO.StringIO()
-    sortby = 'cumtime'
-    ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-    ps.print_stats()
+#    s = StringIO.StringIO()
+#    sortby = 'tottime'
+#    ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+#    ps.print_stats()
     #print s.getvalue()
 
 RMf.close()

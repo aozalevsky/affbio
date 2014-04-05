@@ -71,13 +71,15 @@ while j < N:
     if rank == 0:
         logging.info('Processing column %d of %d' % (j, N))
     jj = j + 1
-    tM = np.fromiter(
-        (calc(pdb_struct[i], pdb_struct[j]) for i in xrange(jj, N)),
-        dtype='float32')
+    tN = N - jj
+    if tN > 0:
+        tM = np.fromiter(
+            (calc(pdb_struct[i], pdb_struct[j]) for i in xrange(jj, N)),
+            dtype='float32')
 
-    ms = h5s.create_simple((N - jj,))
-    Ms.select_hyperslab((jj, j), (N - jj, 1))
-    M.id.write(ms, Ms, tM)
+        ms = h5s.create_simple((N - jj,))
+        Ms.select_hyperslab((jj, j), (N - jj, 1))
+        M.id.write(ms, Ms, tM)
 
     j += NPROCS
 
