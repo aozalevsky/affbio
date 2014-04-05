@@ -5,18 +5,30 @@ import datetime as dt
 import numpy as np
 import prody
 
+import mpi4py
 from mpi4py import MPI
 
-import h5py
-from h5py import h5s
 
 
 #Get MPI info
 comm = MPI.COMM_WORLD
+info = MPI.INFO_ENV
 #Get number of processes
 NPROCS = comm.size
 #Get rank
 rank = comm.rank
+
+import h5py
+from h5py import h5s
+
+from h5py import h5p, h5fd
+
+dxpl = h5p.create(h5p.DATASET_XFER)
+dxpl.set_dxpl_mpio(h5fd.MPIO_COLLECTIVE)
+
+fapl = h5p.create(h5p.FILE_ACCESS) 
+fapl.set_fapl_mpio(comm, info)
+fapl.set_alignment(0, 1048576) 
 
 #Init logging
 if rank == 0:
@@ -54,7 +66,10 @@ N = np.count_nonzero(pdb_struct)
 #Init storage for matrices
 Mfn = 'aff_rmsd_matrix.hdf5'
 #HDF5 file
-Mf = h5py.File(Mfn, 'w', driver='mpio', comm=comm)
+fid = h5f.create(MFn, h5f.ACC_TRUNC, fapl=fapl)
+
+Mf = h5py.File(fid) 
+#Mf = h5py.File(Mfn, 'w', driver='mpio', comm=comm)
 #Table for RMSD
 M = Mf.create_dataset(
     'rmsd',
@@ -79,7 +94,7 @@ while j < N:
 
         ms = h5s.create_simple((N - jj,))
         Ms.select_hyperslab((jj, j), (N - jj, 1))
-        M.id.write(ms, Ms, tM)
+        M.id.write(ms, Ms, tM, dxpl=dxpl)
 
     j += NPROCS
 
