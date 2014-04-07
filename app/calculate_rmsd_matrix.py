@@ -20,7 +20,6 @@ from h5py import h5s
 debug = False
 #debug = True
 
-#Init logging
 if rank == 0:
     #Get current time
     t0 = dt.datetime.now()
@@ -32,6 +31,7 @@ if rank == 0:
         pr = cProfile.Profile()
         pr.enable()
 
+#Init logging
 logging.basicConfig(filename='aff.log', level=logging.INFO)
 logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.INFO)
 
@@ -90,21 +90,16 @@ while j < N:
     ms = h5s.create_simple((N - jj,))
     Ms.select_hyperslab((jj, j), (N - jj, 1))
     M.id.write(ms, Ms, tM)
-    #M.id.write(ms, Ms, tM)
 
     j = j + NPROCS
 
 #Wait for all processes
 comm.Barrier()
 
-#Cleanup
-#Close matrix file
-Mf.close()
-
 if rank == 0:
     logging.info("RMSD matrix have been calculated")
     logging.info("RMSD matrix have been successfully written to %s" % Mfn)
-    logging.info("RMSD calculation time is %s" % (t0 - dt.datetime.now()))
+    logging.info("RMSD calculation time is %s" % (dt.datetime.now()- t0))
 
     if debug is True:
         pr.disable()
@@ -112,3 +107,7 @@ if rank == 0:
         sortby = 'tottime'
         ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
         ps.print_stats()
+
+#Cleanup
+#Close matrix file
+Mf.close()

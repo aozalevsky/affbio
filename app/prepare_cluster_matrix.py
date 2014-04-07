@@ -119,8 +119,7 @@ for j in xrange(tb, te):
     CMs.select_hyperslab((j, jj), (1, tN))
     CM.id.write(ms, CMs, ttCM)
 
-RMf.close()
-CMf.close()
+comm.Barrier()
 
 if rank == 0:
 
@@ -133,3 +132,6 @@ if rank == 0:
         sortby = 'tottime'
         ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
         ps.print_stats()
+
+RMf.close()
+CMf.close()

@@ -49,6 +49,7 @@ tCM = np.empty((N,), dtype=np.float)
 
 # Remove degeneracies
 for i in xrange(N):
+    print 'Processing row %d of %d' % (i, N)
 
     CMs.select_hyperslab((i, 0), (1, N))
     CM.id.read(ms, CMs, tCM)
@@ -66,6 +67,7 @@ ms = h5s.create_simple((1,))
 tCM = np.array([median], dtype=np.float)
 
 for i in xrange(N):
+    print 'Processing row %d of %d' % (i, N)
     CMs.select_elements([(i, i)])
     CM.id.write(ms, CMs, tCM)
 
