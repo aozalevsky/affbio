@@ -20,6 +20,7 @@ from h5py import h5p, h5fd
 dxpl = h5p.create(h5p.DATASET_XFER)
 dxpl.set_dxpl_mpio(h5fd.MPIO_COLLECTIVE)
 
+
 def task(rk, l):
     b = rk * l
     return (b, b + l)
