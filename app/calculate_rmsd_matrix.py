@@ -103,7 +103,7 @@ if rank == 0:
     logging.info("RMSD matrix have been calculated")
     logging.info("RMSD matrix have been successfully written to %s" % Mfn)
     logging.info("RMSD calculation time is %s" % (time.time() - t0))
-    print S[-1:5]
+    print S[100, :5]
 
     if debug is True:
         pr.disable()
