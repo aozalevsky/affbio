@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 import logging
-import datetime as dt
+import time
 import numpy as np
 import prody
 
@@ -17,12 +17,13 @@ rank = comm.rank
 import h5py
 from h5py import h5s
 
+
 debug = False
 #debug = True
 
 if rank == 0:
     #Get current time
-    t0 = dt.datetime.now()
+    t0 = time.time()
 
     if debug is True:
         import cProfile
@@ -54,11 +55,12 @@ def calc(i, j):
 
 
 #Now RMSD calculation
-stf = 'aff.struct'
+Sfn = 'aff_struct.hdf5'
 #Reread structures by every process
-pdb_struct = np.load(stf, mmap_mode='r')
+Sf = h5py.File(Sfn, 'r', driver='mpio', comm=comm)
+S = Sf['struct']
 #Count number of structures
-N = np.count_nonzero(pdb_struct)
+N = S.len()
 
 #Init storage for matrices
 Mfn = 'aff_rmsd_matrix.hdf5'
@@ -66,6 +68,7 @@ Mfn = 'aff_rmsd_matrix.hdf5'
 #fid = h5f.create(Mfn, h5f.ACC_TRUNC, fapl=fapl)
 #Mf = h5py.File(fid)
 Mf = h5py.File(Mfn, 'w', driver='mpio', comm=comm)
+Mf.atomic = True
 #Table for RMSD
 M = Mf.create_dataset(
     'rmsd',
@@ -84,7 +87,7 @@ while j < N:
     jj = j + 1
     tN = N - jj
     tM = np.fromiter(
-        (calc(pdb_struct[i], pdb_struct[j]) for i in xrange(jj, N)),
+        (calc(S[i], S[j]) for i in xrange(jj, N)),
         dtype='float32')
 
     ms = h5s.create_simple((N - jj,))
@@ -99,7 +102,8 @@ comm.Barrier()
 if rank == 0:
     logging.info("RMSD matrix have been calculated")
     logging.info("RMSD matrix have been successfully written to %s" % Mfn)
-    logging.info("RMSD calculation time is %s" % (dt.datetime.now()- t0))
+    logging.info("RMSD calculation time is %s" % (time.time() - t0))
+    print S[-1:5]
 
     if debug is True:
         pr.disable()
@@ -111,3 +115,4 @@ if rank == 0:
 #Cleanup
 #Close matrix file
 Mf.close()
+Sf.close()
