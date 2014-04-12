@@ -1,17 +1,13 @@
 #!/usr/bin/python
 
-import sys
-import os
-from os.path import join as pj
 
-import datetime as dt
-
-import numpy as np
+import time
 
 import h5py
 from h5py import h5s
 
 from livestats import livestats
+import numpy as np
 
 debug = False
 #debug = True
@@ -25,7 +21,7 @@ CMf = h5py.File(CMfn, 'r+', driver='sec2')
 CM = CMf['cluster']
 CMs = CM.id.get_space()
 
-t0 = dt.datetime.now()
+t0 = time.time()
 
 if debug is True:
     import cProfile
@@ -57,7 +53,7 @@ for i in xrange(N):
     madd(tCM)
 
 level, median = med.quantiles()[0]
-t1 = dt.datetime.now()
+t1 = time.time()
 
 print 'Med', median
 #print 'NP', np.median(CM)

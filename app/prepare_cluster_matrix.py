@@ -1,11 +1,6 @@
 #!/usr/bin/python
 
-import sys
-import os
-from os.path import join as pj
-
-import datetime as dt
-
+import time
 import numpy as np
 
 from mpi4py import MPI
@@ -13,8 +8,8 @@ from mpi4py import MPI
 import h5py
 from h5py import h5s
 
-#debug = False
-debug = True
+debug = False
+#debug = True
 
 
 def task(rk, ln):
@@ -32,6 +27,7 @@ rank = comm.rank
 RMfn = 'aff_rmsd_matrix.hdf5'
 #Open matrix file in parallel mode
 RMf = h5py.File(RMfn, 'r', driver='mpio', comm=comm)
+RMf.atomic = True
 #Open table with data for clusterization
 RM = RMf['rmsd']
 RMs = RM.id.get_space()
@@ -40,7 +36,7 @@ N = 0
 l = 0
 
 if rank == 0:
-    t0 = dt.datetime.now()
+    t0 = time.clock()
 
     if debug is True:
         import cProfile
@@ -76,6 +72,7 @@ if rank == NPROCS - 1:
 CMfn = 'aff_cluster_matrix.hdf5'
 #Open matrix file in parallel mode
 CMf = h5py.File(CMfn, 'w', driver='mpio', comm=comm)
+CMf.atomic = True
 #Open table with data for clusterization
 CM = CMf.create_dataset(
     'cluster',
@@ -123,7 +120,7 @@ comm.Barrier()
 
 if rank == 0:
 
-    t1 = dt.datetime.now()
+    t1 = time.clock()
     print "Time is %s" % (t1 - t0)
 
     if debug is True:
@@ -132,6 +129,7 @@ if rank == 0:
         sortby = 'tottime'
         ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
         ps.print_stats()
+        print s.getvalue()
 
 RMf.close()
 CMf.close()

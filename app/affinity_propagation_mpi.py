@@ -16,7 +16,6 @@ from mpi4py import MPI
 import h5py
 from h5py import h5s
 
-
 def task(rk, l):
     b = rk * l
     return (b, b + l)
@@ -38,6 +37,7 @@ rank = comm.rank
 Sfn = 'aff_cluster_matrix.hdf5'
 #Open matrix file in parallel mode
 Sf = h5py.File(Sfn, 'r', driver='mpio', comm=comm)
+Sf.atomic = True
 #Open table with data for clusterization
 S = Sf['cluster']
 
@@ -110,6 +110,7 @@ tS = np.ndarray((P.N,), dtype=np.float)
 tdS = np.ndarray((1,), dtype=np.float)
 
 TMf = h5py.File(P.TMfn, 'w', driver='mpio', comm=comm)
+TMf.atomic = True
 
 R = TMf.create_dataset('R', (P.N, P.N), dtype=np.float)
 Rs = R.id.get_space()
