@@ -1,99 +1,120 @@
 #!/usr/bin/python
 
-import logging
 import sys
-import os
-import datetime as dt
-
+import time
 import prody
 import numpy as np
 
 from mpi4py import MPI
 
-
 #Get MPI info
 comm = MPI.COMM_WORLD
 #Get number of processes
 NPROCS = comm.size
+rank = comm.rank
+
+import h5py
+from h5py import h5s
 
 
-#Init logging
-if comm.rank == 0:
-    with open('aff.log', 'w'):
-        pass
-    #Get current time
-    t0 = dt.datetime.now()
-    t = t0
-logging.basicConfig(filename='aff.log', level=logging.INFO)
-logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.INFO)
-
-#Add logging to console
-console = logging.StreamHandler()
-formatter = logging.Formatter('%(levelname)s:%(message)s')
-console.setFormatter(formatter)
-console.setLevel(logging.INFO)
-logging.getLogger('').addHandler(console)
-
-#Change logging level for pp module
-p_log = logging.getLogger("pp")
-p_log.setLevel(logging.ERROR)
-
-#Change logging level for prody module
-pr_log = logging.getLogger("prody")
-pr_log.setLevel(logging.ERROR)
+def task(rk, ln):
+    b = rk * ln
+    return (b, b + ln)
 
 
 def parse(i):
     """Parse PDB files"""
-    return prody.parsePDB(i)
+    ps = prody.parsePDB(i)
+    pc = ps.getCoords()
+    return pc
 
-pdb_f = 'aff.list'
+debug = False
+#debug = True
 
-pdb_list = np.array(sys.argv[1:])
-ln = len(pdb_list)
-n = ln / NPROCS
-vln = ln
-vn = n
-if n == 0:
-    vn = ln
-elif n > 0 and (n * NPROCS) != ln:
-    vn = n + 1
-    vln = vn * NPROCS
+#Init logging
+if rank == 0:
+    #Get current time
+    t0 = time.clock()
 
-#File with imported structure objects
-stf = 'aff.struct'
+    if debug is True:
+        import cProfile
+        import pstats
+        import StringIO
+        pr = cProfile.Profile()
+        pr.enable()
 
-stf_t = stf + '.' + str(comm.rank)
 
-if (n == 0 and comm.rank == 0) or n > 0:
-    pdb_struct = np.ndarray((vn,), dtype='object')
-    for i in range(vn):
-        ind = vn * comm.rank + i
-        if ind < ln:
-            pdb_struct[i] = parse(pdb_list[ind])
-    #Dump all structures to file
-    pdb_struct.dump(stf_t)
+pdb_list = sys.argv[1:]
+N = len(pdb_list)
+
+r = N % NPROCS
+if r != 0:
+    r = NPROCS - r
+    N = N + r
+l = N / NPROCS
+
+tb, te = task(NPROCS - 1 - rank, l)
+
+if rank == 0:
+    te = te - r
+
+s = np.ndarray((3,), dtype=np.int)
+if rank == 0:
+    t = parse(pdb_list[0])
+    s[0] = N
+    s[1], s[2] = t.shape
+comm.Bcast([s, MPI.INT])
+
+
+#Init storage for matrices
+Sfn = 'aff_struct.hdf5'
+#HDF5 file
+Sf = h5py.File(Sfn, 'w', driver='mpio', comm=comm)
+Sf.atomic = True
+#Table for RMSD
+S = Sf.create_dataset(
+    'struct',
+    (s[0], s[1], s[2]),
+    dtype=np.float,
+    chunks=(1, s[1], s[2]))
+Ss = S.id.get_space()
+
+ms = h5s.create_simple((te - tb, s[1], s[2]))
+
+tS = np.array([parse(pdb_list[i]) for i in xrange(tb, te)])
+Ss.select_hyperslab((tb, 0, 0), (te - tb, s[1], s[2]))
+S.id.write(ms, Ss, tS)
 
 #Wait for all processes
 comm.Barrier()
 
-if comm.rank == 0:
+Sf.close()
 
-    if n == 0:
-        pdb_struct[:] = np.load(stf + '.' + str(0))
-        os.remove(stf + '.' + str(0))
+if rank == 0:
 
-    elif n > 0:
-        pdb_struct = np.ndarray((vln, ), dtype='object')
-        for i in range(NPROCS):
-            pdb_struct[vn * i: vn * (i + 1)] = np.load(stf + '.' + str(i))
-            os.remove(stf + '.' + str(i))
-        pdb_struct.dump(stf)
-        pdb_list.dump(pdb_f)
+    Sf = h5py.File(Sfn, 'a', driver='sec2')
+    S = Sf['struct']
 
-    t = dt.datetime.now() - t0
-    logging.info("Structure reading time is %s" % t)
-    t = dt.datetime.now()
+    vls = h5py.special_dtype(vlen=str)
+    L = Sf.create_dataset(
+        'labels',
+        (N,),
+        dtype=vls)
 
+    for i in xrange(r):
+        rd = np.random.randint(N)
+        S[te + i] = S[rd]
+        pdb_list.append('dummy%d_%s' % (i, pdb_list[rd]))
+    L[:] = pdb_list[:]
 
-comm.Barrier()
+    print "Structure reading time is %f" % (time.clock() - t0)
+
+    if debug is True:
+        pr.disable()
+        s = StringIO.StringIO()
+        sortby = 'tottime'
+        ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+        ps.print_stats()
+        print s.getvalue()
+
+    Sf.close()
