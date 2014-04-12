@@ -102,7 +102,7 @@ if rank == 0:
         dtype=vls)
 
     for i in xrange(r):
-        rd = np.random.randint(N)
+        rd = np.random.randint(N - r)
         S[te + i] = S[rd]
         pdb_list.append('dummy%d_%s' % (i, pdb_list[rd]))
     L[:] = pdb_list[:]
