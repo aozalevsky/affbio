@@ -1,20 +1,39 @@
 #!/usr/bin/python
 
+#General modules
 import sys
 import time
-import prody
+import tempfile
+import shutil
+import os
+
+#NumPy for arrays
 import numpy as np
 
+#MPI parallelism
 from mpi4py import MPI
-
 #Get MPI info
 comm = MPI.COMM_WORLD
 #Get number of processes
 NPROCS = comm.size
+#Get rank
 rank = comm.rank
 
+#Multiprocessing parallellism
+import multiprocessing
+from joblib import Parallel, delayed
+NCORES = multiprocessing.cpu_count()
+NCORES = NCORES // NPROCS
+print NCORES
+#H5PY for storage
 import h5py
 from h5py import h5s
+
+#pyRMSD for calculations
+import prody
+
+
+debug = False
 
 
 def task(rk, ln):
@@ -22,11 +41,11 @@ def task(rk, ln):
     return (b, b + ln)
 
 
-def parse(i):
+def parse(i, pdb, out):
     """Parse PDB files"""
-    ps = prody.parsePDB(i)
+    ps = prody.parsePDB(pdb)
     pc = ps.getCoords()
-    return pc
+    out[i] = pc
 
 debug = False
 #debug = True
@@ -34,7 +53,7 @@ debug = False
 #Init logging
 if rank == 0:
     #Get current time
-    t0 = time.clock()
+    t0 = time.time()
 
     if debug is True:
         import cProfile
@@ -47,9 +66,9 @@ if rank == 0:
 pdb_list = sys.argv[1:]
 N = len(pdb_list)
 
-r = N % NPROCS
+r = N % (NPROCS * NCORES)
 if r != 0:
-    r = NPROCS - r
+    r = (NPROCS * NCORES) - r
     N = N + r
 l = N / NPROCS
 
@@ -58,12 +77,13 @@ tb, te = task(NPROCS - 1 - rank, l)
 if rank == 0:
     te = te - r
 
-s = np.ndarray((3,), dtype=np.int)
+na = 0  # Number of atoms
+nc = 3  # Number of atom coordinates
 if rank == 0:
-    t = parse(pdb_list[0])
-    s[0] = N
-    s[1], s[2] = t.shape
-comm.Bcast([s, MPI.INT])
+    t = prody.parsePDB(pdb_list[0])
+    tt = t.getCoords()
+    na = tt.shape[0]
+na = comm.bcast(na)
 
 
 #Init storage for matrices
@@ -74,20 +94,28 @@ Sf.atomic = True
 #Table for RMSD
 S = Sf.create_dataset(
     'struct',
-    (s[0], s[1], s[2]),
+    (N, na, nc),
     dtype=np.float,
-    chunks=(1, s[1], s[2]))
+    chunks=(1, na, nc))
 Ss = S.id.get_space()
 
-ms = h5s.create_simple((te - tb, s[1], s[2]))
+ms = h5s.create_simple((te - tb, na, nc))
 
-tS = np.array([parse(pdb_list[i]) for i in xrange(tb, te)])
-Ss.select_hyperslab((tb, 0, 0), (te - tb, s[1], s[2]))
+folder = tempfile.mkdtemp()
+tSfn = os.path.join(folder, 'tS')
+tS = np.memmap(tSfn, dtype=np.float, shape=(l, na, nc), mode='w+')
+
+Parallel(n_jobs=NCORES)(
+    delayed(parse)(i, pdb_list[tb + i], tS) for i in xrange(te - tb))
+
+#tS = np.array([parse(pdb_list[i]) for i in xrange(tb, te)])
+Ss.select_hyperslab((tb, 0, 0), (te - tb, na, nc))
 S.id.write(ms, Ss, tS)
 
 #Wait for all processes
 comm.Barrier()
 
+shutil.rmtree(folder)
 Sf.close()
 
 if rank == 0:
@@ -107,7 +135,7 @@ if rank == 0:
         pdb_list.append('dummy%d_%s' % (i, pdb_list[rd]))
     L[:] = pdb_list[:]
 
-    print "Structure reading time is %f" % (time.clock() - t0)
+    print "Structure reading time is %f" % (time.time() - t0)
 
     if debug is True:
         pr.disable()
@@ -116,5 +144,4 @@ if rank == 0:
         ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
         ps.print_stats()
         print s.getvalue()
-
     Sf.close()
