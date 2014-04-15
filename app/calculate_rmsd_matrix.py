@@ -1,22 +1,28 @@
 #!/usr/bin/python
 
+#General modules
 import time
+
+#NumPy for arrays
 import numpy as np
-import pyRMSD.RMSDCalculator
-from pyRMSD import condensedMatrix
 
+#RMPI parallelism
 from mpi4py import MPI
-
-#Get MPI info
+#Get RMPI info
 comm = MPI.COMM_WORLD
 #Get number of processes
 NPROCS = comm.size
-size = NPROCS
 #Get rank
 rank = comm.rank
 
+#H5PY for storage
 import h5py
 from h5py import h5s
+
+#pyRMSD for calculations
+import pyRMSD.RMSDCalculator
+from pyRMSD import condensedMatrix
+
 
 debug = False
 #debug = True
@@ -70,36 +76,37 @@ S = Sf['struct']
 #Count number of structures
 N = S.len()
 
-#Init storage for matrices
-Mfn = 'aff_rmsd_matrix.hdf5'
-#HDF5 file
-#fid = h5f.create(Mfn, h5f.ACC_TRUNC, fapl=fapl)
-#Mf = h5py.File(fid)
-Mf = h5py.File(Mfn, 'w', driver='mpio', comm=comm)
-Mf.atomic = True
-#Table for RMSD
-M = Mf.create_dataset(
-    'rmsd',
-    (N, N),
-    dtype='float32',
-    chunks=(1, N))
-Ms = M.id.get_space()
-
 
 #Partiotioning
-l = N // size
-lr = N % size
+l = N // NPROCS
+lr = N % NPROCS
 
 if lr > 0:
-    print 'Truncating matrix to %dx%d to fit' % (l * size, l * size)
+    print 'Truncating matrix to %dx%d to fit' % (l * NPROCS, l * NPROCS)
 
-lN = (size + 1) * size / 2
+lN = (NPROCS + 1) * NPROCS / 2
 
-m = lN // size
-mr = lN % size
+m = lN // NPROCS
+mr = lN % NPROCS
 
 if mr > 0:
     m = m + 1 if rank % 2 == 0 else m
+
+#Init storage for matrices
+RMfn = 'aff_rmsd_matrix.hdf5'
+#HDF5 file
+#fid = h5f.create(RMfn, h5f.ACC_TRUNC, fapl=fapl)
+#RMf = h5py.File(fid)
+RMf = h5py.File(RMfn, 'w', driver='mpio', comm=comm)
+RMf.atomic = True
+#Table for RMSD
+RM = RMf.create_dataset(
+    'rmsd',
+    (N, N),
+    dtype=np.float,
+    chunks=(l, l))
+RM.attrs['chunk'] = l
+RMs = RM.id.get_space()
 
 
 #Init calculations
@@ -117,8 +124,8 @@ for c in xrange(0, m):
     except AssertionError:
         calc_chunk(ic, jc, tS)
 
-    Ms.select_hyperslab((i * l, j * l), (l, l))
-    M.id.write(ms, Ms, tS)
+    RMs.select_hyperslab((i * l, j * l), (l, l))
+    RM.id.write(ms, RMs, tS)
 
     if rank == 0:
         print "Step %d of %d" % (c, m)
@@ -127,7 +134,7 @@ for c in xrange(0, m):
         j = j - 1
         jc = S[j * l: (j + 1) * l]
     elif rank - c == 0:
-        i = size - rank - 1
+        i = NPROCS - rank - 1
         ic = S[i * l: (i + 1) * l]
     else:
         j = j + 1
@@ -139,7 +146,7 @@ comm.Barrier()
 
 if rank == 0:
     print "RMSD matrix have been calculated"
-    print "RMSD matrix have been successfully written to %s" % Mfn
+    print "RMSD matrix have been successfully written to %s" % RMfn
     print "RMSD calculation time is %s" % (time.time() - t0)
 
     if debug is True:
@@ -153,4 +160,4 @@ if rank == 0:
 #Cleanup
 #Close matrix file
 Sf.close()
-Mf.close()
+RMf.close()
