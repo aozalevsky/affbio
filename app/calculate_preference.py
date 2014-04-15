@@ -1,26 +1,33 @@
 #!/usr/bin/python
 
-
+#General modules
 import time
 
+#NumPy for arrays
+import numpy as np
+
+#MPI parallelism
+from mpi4py import MPI
+#Get MPI info
+comm = MPI.COMM_WORLD
+#Get number of processes
+NPROCS = comm.size
+#Get rank
+rank = comm.rank
+
+#H5PY for storage
 import h5py
 from h5py import h5s
 
-from livestats import livestats
-import numpy as np
+#Livestats for median
+#from livestats import livestats
+import pyximport; pyximport.install()
+import lvc
 
 debug = False
-#debug = True
+debug = True
 
-#Init cluster matrix
-#Get file name
-CMfn = 'aff_cluster_matrix.hdf5'
-#Open matrix file in parallel mode
-CMf = h5py.File(CMfn, 'r+', driver='sec2')
-#Open table with data for clusterization
-CM = CMf['cluster']
-CMs = CM.id.get_space()
-
+#Get current time
 t0 = time.time()
 
 if debug is True:
@@ -30,44 +37,70 @@ if debug is True:
     pr = cProfile.Profile()
     pr.enable()
 
+#Init cluster matrix
+#Get file name
+CMfn = 'aff_cluster_matrix.hdf5'
+#Open matrix file in parallel mode
+CMf = h5py.File(CMfn, 'r+', driver='sec2')
+#CMf.atomic = True
+#Open table with data for clusterization
+CM = CMf['cluster']
+CMs = CM.id.get_space()
+
+N = CM.len()
+l = CM.attrs['chunk']
+m = N // l
+m2 = m ** 2
+
 N, N1 = CM.shape
 
 if N != N1:
     raise ValueError(
         "S must be a square array (shape=%s)" % repr(CM.shape))
 
-med = livestats.LiveStats()
+if l <= 0:
+    raise ValueError(
+        "Wrong chunk size in RMSD matrix")
+
+#Init calculations
+#med = livestats.LiveStats()
+med = lvc.Quantile(0.5)
 madd = np.vectorize(med.add)
 
-
+tCM = np.zeros((N,), dtype=np.float)
 ms = h5s.create_simple((N,))
-tCM = np.empty((N,), dtype=np.float)
 
-# Remove degeneracies
+c = 0
 for i in xrange(N):
-    print 'Processing row %d of %d' % (i, N)
+    #for j in xrange(m):
+        #print 'Processing chunk %d of %d' % (c, m2)
+        #CMs.select_hyperslab((i * l, j * l), (l, l))
+        CMs.select_hyperslab((i, 0), (1, N))
+        CM.id.read(ms, CMs, tCM)
+        med.add(tCM)
+        #madd(tCM)
+#       for x in np.nditer(tCM):
+#           med.add(x)
+        c += 1
 
-    CMs.select_hyperslab((i, 0), (1, N))
-    CM.id.read(ms, CMs, tCM)
 
-    madd(tCM)
-
-level, median = med.quantiles()[0]
+#level, median = med.quantiles()[0]
+median = med.quantile()
 t1 = time.time()
+ms = h5s.create_simple((1, 1))
 
 print 'Med', median
-#print 'NP', np.median(CM)
-print "Time is %s" % (t1 - t0)
-
-ms = h5s.create_simple((1,))
-tCM = np.array([median], dtype=np.float)
+print 'NP', np.median(CM)
 
 for i in xrange(N):
-    print 'Processing row %d of %d' % (i, N)
+    if ((i + 1) % l) == 0:
+        print 'Writing preference to row %d of %d' % ((i + 1), N)
     CMs.select_elements([(i, i)])
     CM.id.write(ms, CMs, tCM)
 
+
 CM.attrs['preference'] = median
+print "Time is %s" % (time.time() - t0)
 
 if debug is True:
     pr.disable()
