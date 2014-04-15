@@ -3,6 +3,6 @@ syntax: glob
 **.log
 **.swp
 data
-app/lv.c
-app/lv.html
-app/lv.so
+app/lvc.c
+app/lvc.html
+app/lvc.so
