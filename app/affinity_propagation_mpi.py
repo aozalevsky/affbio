@@ -1,20 +1,26 @@
 #!/usr/bin/python
 
-
-import sys
-
+#General modules
+import time
 import os
-from os.path import join as pj
 
-import datetime as dt
-
+#NumPy for arrays
 import numpy as np
 import bottleneck as bn
 
+#MPI parallelism
 from mpi4py import MPI
+#Get MPI info
+comm = MPI.COMM_WORLD
+#Get number of processes
+NPROCS = comm.size
+#Get rank
+rank = comm.rank
 
+#H5PY for storage
 import h5py
 from h5py import h5s
+
 
 def task(rk, l):
     b = rk * l
@@ -53,11 +59,21 @@ params = {
 
 P = Bunch(params)
 
+#debug = False
+debug = True
+
 if rank == 0:
-    t0 = dt.datetime.now()
+    t0 = time.time()
 #    import cProfile, pstats, StringIO
 #    pr = cProfile.Profile()
 #    pr.enable()
+
+    if debug is True:
+        import cProfile
+        import pstats
+        import StringIO
+        pr = cProfile.Profile()
+        pr.enable()
 
     N, N1 = S.shape
 
@@ -91,7 +107,8 @@ if rank == 0:
     P.verbose = verbose
 
     #tmpd = osp.join(osp.abspath(osp.dirname(s.file.filename)), 'tmp.hdf5')
-    P.TMfn = pj('/tmp', 'tmp.hdf5')
+    #P.TMfn = pj('/tmp', 'tmp.hdf5')
+    P.TMfn = 'aff_tmp.hdf5'
 
     l = N / NPROCS
     r = N - l * NPROCS
@@ -117,11 +134,17 @@ Rs = R.id.get_space()
 tRold = np.ndarray((P.N,), dtype=np.float)
 tdR = np.ndarray((P.l,), dtype=np.float)
 
-Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float)
+#Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float)
+#Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float, chunks=(P.N, 1))
+#Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float, chunks=(1, P.N))
+Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float, chunks=(100, 100))
+
 Rps = Rp.id.get_space()
 tRp = np.ndarray((P.N,), dtype=np.float)
 
-A = TMf.create_dataset('A', (P.N, P.N), dtype=np.float)
+A = TMf.create_dataset('A', (P.N, P.N), dtype=np.float, chunks=(100, 100))
+#A = TMf.create_dataset('A', (P.N, P.N), dtype=np.float, chunks=(1, P.N))
+#A = TMf.create_dataset('A', (P.N, P.N), dtype=np.float)
 As = A.id.get_space()
 
 tAold = np.ndarray((P.N,), dtype=np.float)
@@ -141,7 +164,7 @@ tb, te = task(rank, P.l)
 
 for it in xrange(P.max_iter):
     if rank == 0:
-        tit = dt.datetime.now()
+        tit = time.time()
 
     # Compute responsibilities
     for i in xrange(tb, te):
@@ -162,7 +185,7 @@ for it in xrange(P.max_iter):
         tI = bn.nanargmax(tAS)
         tY = tAS[tI]
         tAS[tI] = z
-        tY2 = np.max(tAS)
+        tY2 = bn.nanmax(tAS)
 
         tR = tS - tY
         tR[tI] = tS[tI] - tY2
@@ -242,7 +265,7 @@ for it in xrange(P.max_iter):
         converged = comm.bcast(converged, root=0)
 
     if rank == 0:
-        teit = dt.datetime.now()
+        teit = time.time()
 
         print 'It %d K %d T %s' % (it, K, teit - tit)
 
@@ -317,17 +340,20 @@ else:
 
 if rank == 0:
     os.remove(P.TMfn)
-    t1 = dt.datetime.now()
+    t1 = time.time()
     print I[:], C[:]
     I.dump('aff.centers')
     C.dump('aff.labels')
     print "APM time is %s" % (t1 - t0)
-    #pr.disable()
-    #s = StringIO.StringIO()
-    #sortby = 'cumtime'
-    #ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-    #ps.print_stats()
-    #print s.getvalue()
 
+    if debug is True:
+        pr.disable()
+        s = StringIO.StringIO()
+        sortby = 'tottime'
+        ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+        ps.print_stats()
+        print s.getvalue()
+
+#Cleanup
 Sf.close()
 TMf.close()
