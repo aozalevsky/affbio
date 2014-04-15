@@ -1,26 +1,56 @@
 #!/usr/bin/python
 
+#General modules
 import time
+
+#NumPy for arrays
 import numpy as np
 
+#MPI parallelism
 from mpi4py import MPI
+#Get MPI info
+comm = MPI.COMM_WORLD
+#Get number of processes
+NPROCS = comm.size
+#Get rank
+rank = comm.rank
 
+#H5PY for storage
 import h5py
 from h5py import h5s
 
 debug = False
 #debug = True
 
+if rank == 0:
+    #Get current time
+    t0 = time.time()
+
+    if debug is True:
+        import cProfile
+        import pstats
+        import StringIO
+        pr = cProfile.Profile()
+        pr.enable()
+
 
 def task(rk, ln):
     b = rk * ln
-    return (b, b + l)
+    return (b, b + ln)
 
-#Get MPI info
-comm = MPI.COMM_WORLD
-#Get number of processes
-NPROCS = comm.size
-rank = comm.rank
+
+def calc_chunk(l, tRM, tCM):
+    ttCM = tCM * random_state.randn(l, l)
+    ttCM += tRM
+    return ttCM
+
+
+def calc_chunk_diag(l, tRM, tCM):
+    tCM += tCM.transpose()
+    tRM += tRM.transpose()
+    ttCM = calc_chunk(l, tRM, tCM)
+    return ttCM
+
 
 #Init RMSD matrix
 #Get file name
@@ -32,40 +62,22 @@ RMf.atomic = True
 RM = RMf['rmsd']
 RMs = RM.id.get_space()
 
-N = 0
-l = 0
+N = RM.len()
+l = N // NPROCS
 
 if rank == 0:
-    t0 = time.clock()
-
-    if debug is True:
-        import cProfile
-        import pstats
-        import StringIO
-        pr = cProfile.Profile()
-        pr.enable()
-
     N, N1 = RM.shape
 
     if N != N1:
         raise ValueError(
             "S must be a square array (shape=%s)" % repr(RM.shape))
 
-    l = N / NPROCS
-    r = N - l * NPROCS
-    if r != 0:
-        l = l
-        N = N - r
-        print 'Truncating matrix to %dx%d to fit on %d procs' % (N, N, NPROCS)
+    print RM.attrs['chunk']
+    if RM.attrs['chunk'] % l > 0:
+        raise ValueError(
+            "Wrong chunk size in RMSD matrix")
 
-N = comm.bcast(N, root=0)
 l = comm.bcast(l, root=0)
-
-tb, te = task(rank, l)
-
-# Fix for last row, because it diagonal and so empty
-if rank == NPROCS - 1:
-    te -= 1
 
 #Init cluster matrix
 #Get file name
@@ -77,51 +89,72 @@ CMf.atomic = True
 CM = CMf.create_dataset(
     'cluster',
     (N, N),
-    dtype=np.float)
-
+    dtype=np.float,
+    chunks=(l, l))
+CM.attrs['chunk'] = l
 CMs = CM.id.get_space()
 
 random_state = np.random.RandomState(0)
 x = np.finfo(np.float).eps
 y = np.finfo(np.float).tiny * 100
 
-# Remove degeneracies
-for j in xrange(tb, te):
+#Partiotioning
+lN = (NPROCS + 1) * NPROCS / 2
 
-    if rank == 0:
-        print 'Processing row %d of %d' % ((j - tb) * NPROCS, N)
+m = lN // NPROCS
+mr = lN % NPROCS
 
-    #Ignore diagonals
-    jj = j + 1
-    tN = N - jj
+if mr > 0:
+    m = m + 1 if rank % 2 == 0 else m
 
-    ms = h5s.create_simple((tN,))
 
-    tRM = np.empty((tN,), dtype=np.float)
-    RMs.select_hyperslab((jj, j), (tN, 1))
+#Init calculations
+tRM = np.zeros((l, l), dtype=np.float)
+tCM = np.zeros((l, l), dtype=np.float)
+ttCM = np.zeros((l, l), dtype=np.float)
+ms = h5s.create_simple((l, l))
+
+i, j = rank, rank
+
+for c in xrange(m):
+    RMs.select_hyperslab((i * l, j * l), (l, l))
     RM.id.read(ms, RMs, tRM)
 
     tRM = -1 * tRM ** 2
     tCM = tRM * x + y
 
-    ttCM = tCM * random_state.randn(tN)
-    ttCM = ttCM + tRM
+    try:
+        assert i != j
 
-    CMs.select_hyperslab((jj, j), (tN, 1))
+        ttCM = calc_chunk(l, tRM, tCM)
+        ttCM.transpose()
+        CMs.select_hyperslab((j * l, i * l), (l, l))
+        CM.id.write(ms, RMs, ttCM)
+
+        calc_chunk(l, tRM, tCM)
+
+    except AssertionError:
+        ttCM = calc_chunk_diag(l, tRM, tCM)
+
+    CMs.select_hyperslab((i * l, j * l), (l, l))
     CM.id.write(ms, CMs, ttCM)
 
-    ttCM = tCM * random_state.randn(tN)
-    ttCM = ttCM + tRM
+    if rank == 0:
+        print "Step %d of %d" % (c, m)
 
-    CMs.select_hyperslab((j, jj), (1, tN))
-    CM.id.write(ms, CMs, ttCM)
+    if (rank - c) > 0:
+        j = j - 1
+    elif (rank - c) == 0:
+        i = NPROCS - rank - 1
+    else:
+        j = j + 1
 
+
+#Wait for all processes
 comm.Barrier()
 
 if rank == 0:
-
-    t1 = time.clock()
-    print "Time is %s" % (t1 - t0)
+    print "Time is %s" % (time.time() - t0)
 
     if debug is True:
         pr.disable()
