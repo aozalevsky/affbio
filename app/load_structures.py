@@ -3,9 +3,6 @@
 #General modules
 import sys
 import time
-import tempfile
-import shutil
-import os
 
 #NumPy for arrays
 import numpy as np
@@ -21,10 +18,9 @@ rank = comm.rank
 
 #Multiprocessing parallellism
 import multiprocessing
-from joblib import Parallel, delayed
+import joblib
 NCORES = multiprocessing.cpu_count()
-NCORES = NCORES // NPROCS
-print NCORES
+
 #H5PY for storage
 import h5py
 from h5py import h5s
@@ -33,19 +29,16 @@ from h5py import h5s
 import prody
 
 
-debug = False
-
-
 def task(rk, ln):
     b = rk * ln
     return (b, b + ln)
 
 
-def parse(i, pdb, out):
+def parse(i):
     """Parse PDB files"""
-    ps = prody.parsePDB(pdb)
+    ps = prody.parsePDB(i)
     pc = ps.getCoords()
-    out[i] = pc
+    return pc
 
 debug = False
 #debug = True
@@ -80,9 +73,8 @@ if rank == 0:
 na = 0  # Number of atoms
 nc = 3  # Number of atom coordinates
 if rank == 0:
-    t = prody.parsePDB(pdb_list[0])
-    tt = t.getCoords()
-    na = tt.shape[0]
+    t = parse(pdb_list[0])
+    na = t.shape[0]
 na = comm.bcast(na)
 
 
@@ -101,21 +93,13 @@ Ss = S.id.get_space()
 
 ms = h5s.create_simple((te - tb, na, nc))
 
-folder = tempfile.mkdtemp()
-tSfn = os.path.join(folder, 'tS')
-tS = np.memmap(tSfn, dtype=np.float, shape=(l, na, nc), mode='w+')
-
-Parallel(n_jobs=NCORES)(
-    delayed(parse)(i, pdb_list[tb + i], tS) for i in xrange(te - tb))
-
-#tS = np.array([parse(pdb_list[i]) for i in xrange(tb, te)])
+tS = np.array([parse(pdb_list[i]) for i in xrange(tb, te)])
 Ss.select_hyperslab((tb, 0, 0), (te - tb, na, nc))
 S.id.write(ms, Ss, tS)
 
 #Wait for all processes
 comm.Barrier()
 
-shutil.rmtree(folder)
 Sf.close()
 
 if rank == 0:
@@ -144,4 +128,5 @@ if rank == 0:
         ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
         ps.print_stats()
         print s.getvalue()
+
     Sf.close()
