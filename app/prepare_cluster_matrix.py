@@ -120,7 +120,9 @@ for c in xrange(m):
     RMs.select_hyperslab((i * l, j * l), (l, l))
     RM.id.read(ms, RMs, tRM)
 
-    tRM = -1 * tRM ** 2
+    #tRM = -1 * tRM ** 2
+    tRM **= 2
+    tRM *= -1
     tCM = tRM * x + y
 
     try:
@@ -129,9 +131,9 @@ for c in xrange(m):
         ttCM = calc_chunk(l, tRM, tCM)
         ttCM.transpose()
         CMs.select_hyperslab((j * l, i * l), (l, l))
-        CM.id.write(ms, RMs, ttCM)
+        CM.id.write(ms, CMs, ttCM)
 
-        calc_chunk(l, tRM, tCM)
+        ttCM = calc_chunk(l, tRM, tCM)
 
     except AssertionError:
         ttCM = calc_chunk_diag(l, tRM, tCM)
