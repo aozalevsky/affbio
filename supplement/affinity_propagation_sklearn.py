@@ -13,6 +13,7 @@ f = h5py.File(matf, 'r')
 #rmsd_matrix = f['rmsd']
 #Table for clusterization
 cl_matrix = f['cluster']
+pref = f['cluster'].attrs['preference']
 #Reread structures by every process
 
 t0 = dt.datetime.now()
@@ -22,6 +23,7 @@ af = apn(
 #    preference=-0.0122545,
     convergence_iter=15,
     max_iter=2000,
+    preference=pref,
     damping=0.9).fit(cl_matrix)
 
 cluster_centers_indices = af.cluster_centers_indices_
