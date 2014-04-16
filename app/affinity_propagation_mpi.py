@@ -21,6 +21,11 @@ rank = comm.rank
 import h5py
 from h5py import h5s
 
+import multiprocessing
+
+NCORES = multiprocessing.cpu_count()
+NCORES = NCORES / NPROCS
+
 
 def task(rk, l):
     b = rk * l
@@ -31,12 +36,6 @@ class Bunch(object):
     def __init__(self, adict):
         self.__dict__.update(adict)
 
-
-#Get MPI info
-comm = MPI.COMM_WORLD
-#Get number of processes
-NPROCS = comm.size
-rank = comm.rank
 
 #Init storage for matrices
 #Get file name
@@ -50,6 +49,7 @@ S = Sf['cluster']
 params = {
     'N': 0,
     'l': 0,
+    'll': 0,
     'TMfn': '',
     'preference': 0.0,
     'conv_iter': 0,
@@ -59,8 +59,8 @@ params = {
 
 P = Bunch(params)
 
-#debug = False
-debug = True
+debug = False
+#debug = True
 
 if rank == 0:
     t0 = time.time()
@@ -110,20 +110,20 @@ if rank == 0:
     #P.TMfn = pj('/tmp', 'tmp.hdf5')
     P.TMfn = 'aff_tmp.hdf5'
 
-    l = N / NPROCS
-    r = N - l * NPROCS
-
-    if r != 0:
-        print 'Truncating matrix to NxN to fit on %d procs' % NPROCS
-        l = l
-        N = N - r
+    r = N % (NPROCS * NCORES)
+    N -= r
+    l = N // NPROCS
+    if r > 0:
+        print 'Truncating matrix to NxN to fit on %d procs' % (NPROCS * l)
     P.N = N
     P.l = l
+    P.ll = NCORES
 
 P = comm.bcast(P)
 
 Ss = S.id.get_space()
-tS = np.ndarray((P.N,), dtype=np.float)
+tS = np.ndarray((P.ll, P.N), dtype=np.float)
+tSl = np.ndarray((P.N,), dtype=np.float)
 tdS = np.ndarray((1,), dtype=np.float)
 
 TMf = h5py.File(P.TMfn, 'w', driver='mpio', comm=comm)
@@ -131,96 +131,107 @@ TMf.atomic = True
 
 R = TMf.create_dataset('R', (P.N, P.N), dtype=np.float)
 Rs = R.id.get_space()
-tRold = np.ndarray((P.N,), dtype=np.float)
+tRold = np.ndarray((P.ll, P.N), dtype=np.float)
+tR = np.ndarray((P.ll, P.N), dtype=np.float)
 tdR = np.ndarray((P.l,), dtype=np.float)
 
-#Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float)
+Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float)
 #Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float, chunks=(P.N, 1))
 #Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float, chunks=(1, P.N))
-Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float, chunks=(100, 100))
+#Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float, chunks=(100, 100))
 
 Rps = Rp.id.get_space()
-tRp = np.ndarray((P.N,), dtype=np.float)
+tRp = np.ndarray((P.ll, P.N), dtype=np.float)
+tRpa = np.ndarray((P.N, P.ll), dtype=np.float)
 
-A = TMf.create_dataset('A', (P.N, P.N), dtype=np.float, chunks=(100, 100))
+#A = TMf.create_dataset('A', (P.N, P.N), dtype=np.float, chunks=(100, 100))
 #A = TMf.create_dataset('A', (P.N, P.N), dtype=np.float, chunks=(1, P.N))
-#A = TMf.create_dataset('A', (P.N, P.N), dtype=np.float)
+A = TMf.create_dataset('A', (P.N, P.N), dtype=np.float)
 As = A.id.get_space()
 
-tAold = np.ndarray((P.N,), dtype=np.float)
-tAS = np.ndarray((P.N,), dtype=np.float)
+tAold = np.ndarray((P.ll, P.N), dtype=np.float)
+tAS = np.ndarray((P.ll, P.N), dtype=np.float)
 tdA = np.ndarray((P.l,), dtype=np.float)
+
+tA = np.ndarray((P.N, P.ll), dtype=np.float)
+tAolda = np.ndarray((P.N, P.ll), dtype=np.float)
 
 e = np.ndarray((P.N, P.conv_iter), dtype=np.int)
 tE = np.ndarray((P.N,), dtype=np.int)
 ttE = np.ndarray((P.l,), dtype=np.int)
 
-ms = h5s.create_simple((P.N,))
+ms = h5s.create_simple((P.ll, P.N))
+
+ms_l = h5s.create_simple((P.N,))
 ms_e = h5s.create_simple((1,))
 
 z = - np.finfo(np.double).max
 
 tb, te = task(rank, P.l)
+#P.ll = P.l // NCORES
 
 for it in xrange(P.max_iter):
     if rank == 0:
         tit = time.time()
 
     # Compute responsibilities
-    for i in xrange(tb, te):
-
-        Ss.select_hyperslab((i, 0), (1, P.N))
+    for i in xrange(tb, te, P.ll):
+        Ss.select_hyperslab((i, 0), (P.ll, P.N))
         S.id.read(ms, Ss, tS)
         #tS = S[i, :]
 
-        As.select_hyperslab((i, 0), (1, P.N))
+        As.select_hyperslab((i, 0), (P.ll, P.N))
         A.id.read(ms, As, tAS)
         #tAS = A[i, :]
         tAS += tS
 
-        Rs.select_hyperslab((i, 0), (1, P.N))
+        Rs.select_hyperslab((i, 0), (P.ll, P.N))
         R.id.read(ms, Rs, tRold)
         #tRold = R[i, :]
 
-        tI = bn.nanargmax(tAS)
-        tY = tAS[tI]
-        tAS[tI] = z
-        tY2 = bn.nanmax(tAS)
+        for ii in xrange(P.ll):
 
-        tR = tS - tY
-        tR[tI] = tS[tI] - tY2
-        tR = (1 - P.damping) * tR + P.damping * tRold
+            tI = np.argmax(tAS[ii])
+            tY = tAS[ii][tI]
+            tAS[ii][tI] = z
+            tY2 = np.max(tAS[ii])
 
-        tdR[i - tb] = tR[i]
-        tRp = np.maximum(tR, 0)
-        tRp[i] = tdR[i - tb]
+            tR[ii] = tS[ii] - tY
+            tR[ii][tI] = tS[ii][tI] - tY2
+            tR[ii] = (1 - P.damping) * tR[ii] + P.damping * tRold[ii]
+
+            tdR[i - tb + ii] = tR[ii][i + ii]
+            tRp[ii] = np.maximum(tR[ii], 0)
+            tRp[ii][i + ii] = tdR[i - tb + ii]
 
         R.id.write(ms, Rs, tR)
         #R[i, :] = tR
 
-        Rps.select_hyperslab((i, 0), (1, P.N))
+        Rps.select_hyperslab((i, 0), (P.ll, P.N))
         Rp.id.write(ms, Rps, tRp)
         #Rp[i, :] = tRp
 
     comm.Barrier()
 
     # Compute availabilities
-    for j in xrange(tb, te):
+    for j in xrange(tb, te, P.ll):
 
-        As.select_hyperslab((0, j), (P.N, 1))
-        A.id.read(ms, As, tAold)
+        As.select_hyperslab((0, j), (P.N, P.ll))
+        A.id.read(ms, As, tAolda)
         #tAold = A[:, j]
 
-        Rps.select_hyperslab((0, j), (P.N, 1))
-        Rp.id.read(ms, Rps, tRp)
+        Rps.select_hyperslab((0, j), (P.N, P.ll))
+        Rp.id.read(ms, Rps, tRpa)
         #tRp = Rp[:, j]
 
-        tA = bn.nansum(tRp) - tRp
-        tdA[j - tb] = tA[j]
-        tA = np.minimum(tA, 0)
-        tA[j] = tdA[j - tb]
+        for jj in xrange(P.ll):
+            tA[:, jj] = np.sum(tRpa[:, jj]) - tRpa[:, jj]
 
-        tA = (1 - P.damping) * tA + P.damping * tAold
+            tdA[j - tb + jj] = tA[j + jj, jj]
+            tA[:, jj] = np.minimum(tA[:, jj], 0)
+            tA[j + jj, jj] = tdA[j - tb + jj]
+
+            tA[:, jj] = (1 - P.damping) * tA[:, jj] + P.damping * tAolda[:, jj]
 
         A.id.write(ms, As, tA)
         #A[:, j] = (1 - P.damping) * tA + P.damping * tAold
@@ -244,7 +255,7 @@ for it in xrange(P.max_iter):
         se = 0
 
         for i in xrange(tb, te):
-            n = bn.nansum(e[i, :])
+            n = np.sum(e[i, :])
             if n == P.conv_iter or n == 0:
                 se += 1
 
@@ -278,12 +289,13 @@ if K > 0:
     C = np.zeros((P.N,), dtype=np.int)
     tC = np.zeros((P.l,), dtype=np.int)
 
+
     for i in xrange(tb, te):
 
         Ss.select_hyperslab((i, 0), (1, P.N))
-        S.id.read(ms, Ss, tS)
+        S.id.read(ms_l, Ss, tSl)
 
-        tC[i - tb] = bn.nanargmax(tS[I])
+        tC[i - tb] = np.argmax(tSl[I])
 
     comm.Gather([tC, MPI.INT], [C, MPI.INT])
 
@@ -299,33 +311,31 @@ if K > 0:
         tI = np.zeros((tN, ), dtype=np.float)
         ttI = np.zeros((tN, ), dtype=np.float)
         tttI = np.zeros((tN, ), dtype=np.float)
+        ms_k = h5s.create_simple((tN,))
 
         j = rank
         while j < tN:
-            for i in xrange(tN):
+            ind = [(ii[i], ii[j]) for i in xrange(tN)]
 
-                jj = ii[j]
-                ind = [(ii[i], jj)]
+            Ss.select_elements(ind)
+            S.id.read(ms_k, Ss, tttI)
 
-                Ss.select_elements(ind)
-                S.id.read(ms_e, Ss, tdS)
-                tttI[i] = tdS[0]
-
-            ttI[j] = bn.nansum(tttI)
+            ttI[j] = np.sum(tttI)
             j += NPROCS
 
         comm.Reduce([ttI, MPI.FLOAT], [tI, MPI.FLOAT])
 
         if rank == 0:
-            I[k] = ii[bn.nanargmax(tI)]
+            I[k] = ii[np.argmax(tI)]
 
+    I.sort()
     comm.Bcast([I, MPI.INT])
 
     for i in xrange(tb, te):
         Ss.select_hyperslab((i, 0), (1, P.N))
-        S.id.read(ms, Ss, tS)
+        S.id.read(ms_l, Ss, tSl)
 
-        tC[i - tb] = bn.nanargmax(tS[I])
+        tC[i - tb] = np.argmax(tSl[I])
 
     comm.Gather([tC, MPI.INT], [C, MPI.INT])
 
