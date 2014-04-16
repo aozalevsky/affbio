@@ -99,7 +99,8 @@ for i in xrange(N):
     CM.id.write(ms, CMs, tCM)
 
 
-CM.attrs['preference'] = median
+#CM.attrs['preference'] = median
+CM.attrs['preference'] = np.median(CM)
 print "Time is %s" % (time.time() - t0)
 
 if debug is True:
