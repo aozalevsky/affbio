@@ -3,6 +3,8 @@
 #General modules
 import time
 import os
+import sys
+import psutil
 
 #NumPy for arrays
 import numpy as np
@@ -60,7 +62,7 @@ params = {
 P = Bunch(params)
 
 debug = False
-#debug = True
+debug = True
 
 if rank == 0:
     t0 = time.time()
@@ -116,12 +118,29 @@ if rank == 0:
     if r > 0:
         print 'Truncating matrix to NxN to fit on %d procs' % (NPROCS * l)
     P.N = N
+
+    #Fit to memory
+    MEM = 500 * 10**6
+    #MEM = psutil.phymem_usage().available
+    tt = np.arange(1, dtype=np.float)
+    ts = sys.getsizeof(tt) + P.N * sys.getsizeof(tt[0])
+    ts *= 15  # Estimated number of used arrays
+    print ts
+    tl = MEM // ts
+    print tl
+    if tl >= l:
+        tl = l
+    else:
+        while l % tl > 0:
+            tl -= 1
+    print tl
     P.l = l
-    P.ll = NCORES
+    P.ll = tl
 
 P = comm.bcast(P)
 
 Ss = S.id.get_space()
+
 tS = np.ndarray((P.ll, P.N), dtype=np.float)
 tSl = np.ndarray((P.N,), dtype=np.float)
 tdS = np.ndarray((1,), dtype=np.float)
@@ -136,9 +155,6 @@ tR = np.ndarray((P.ll, P.N), dtype=np.float)
 tdR = np.ndarray((P.l,), dtype=np.float)
 
 Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float)
-#Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float, chunks=(P.N, 1))
-#Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float, chunks=(1, P.N))
-#Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float, chunks=(100, 100))
 
 Rps = Rp.id.get_space()
 tRp = np.ndarray((P.ll, P.N), dtype=np.float)
@@ -149,12 +165,11 @@ tRpa = np.ndarray((P.N, P.ll), dtype=np.float)
 A = TMf.create_dataset('A', (P.N, P.N), dtype=np.float)
 As = A.id.get_space()
 
-tAold = np.ndarray((P.ll, P.N), dtype=np.float)
 tAS = np.ndarray((P.ll, P.N), dtype=np.float)
 tdA = np.ndarray((P.l,), dtype=np.float)
 
 tA = np.ndarray((P.N, P.ll), dtype=np.float)
-tAolda = np.ndarray((P.N, P.ll), dtype=np.float)
+tAold = np.ndarray((P.N, P.ll), dtype=np.float)
 
 e = np.ndarray((P.N, P.conv_iter), dtype=np.int)
 tE = np.ndarray((P.N,), dtype=np.int)
@@ -169,6 +184,7 @@ z = - np.finfo(np.double).max
 
 tb, te = task(rank, P.l)
 #P.ll = P.l // NCORES
+
 
 for it in xrange(P.max_iter):
     if rank == 0:
@@ -191,10 +207,10 @@ for it in xrange(P.max_iter):
 
         for ii in xrange(P.ll):
 
-            tI = np.argmax(tAS[ii])
+            tI = bn.nanargmax(tAS[ii])
             tY = tAS[ii][tI]
             tAS[ii][tI] = z
-            tY2 = np.max(tAS[ii])
+            tY2 = bn.nanmax(tAS[ii])
 
             tR[ii] = tS[ii] - tY
             tR[ii][tI] = tS[ii][tI] - tY2
@@ -217,7 +233,7 @@ for it in xrange(P.max_iter):
     for j in xrange(tb, te, P.ll):
 
         As.select_hyperslab((0, j), (P.N, P.ll))
-        A.id.read(ms, As, tAolda)
+        A.id.read(ms, As, tAold)
         #tAold = A[:, j]
 
         Rps.select_hyperslab((0, j), (P.N, P.ll))
@@ -225,13 +241,13 @@ for it in xrange(P.max_iter):
         #tRp = Rp[:, j]
 
         for jj in xrange(P.ll):
-            tA[:, jj] = np.sum(tRpa[:, jj]) - tRpa[:, jj]
+            tA[:, jj] = bn.nansum(tRpa[:, jj]) - tRpa[:, jj]
 
             tdA[j - tb + jj] = tA[j + jj, jj]
             tA[:, jj] = np.minimum(tA[:, jj], 0)
             tA[j + jj, jj] = tdA[j - tb + jj]
 
-            tA[:, jj] = (1 - P.damping) * tA[:, jj] + P.damping * tAolda[:, jj]
+            tA[:, jj] = (1 - P.damping) * tA[:, jj] + P.damping * tAold[:, jj]
 
         A.id.write(ms, As, tA)
         #A[:, j] = (1 - P.damping) * tA + P.damping * tAold
@@ -255,7 +271,7 @@ for it in xrange(P.max_iter):
         se = 0
 
         for i in xrange(tb, te):
-            n = np.sum(e[i, :])
+            n = bn.nansum(e[i, :])
             if n == P.conv_iter or n == 0:
                 se += 1
 
@@ -295,7 +311,7 @@ if K > 0:
         Ss.select_hyperslab((i, 0), (1, P.N))
         S.id.read(ms_l, Ss, tSl)
 
-        tC[i - tb] = np.argmax(tSl[I])
+        tC[i - tb] = bn.nanargmax(tSl[I])
 
     comm.Gather([tC, MPI.INT], [C, MPI.INT])
 
@@ -320,13 +336,13 @@ if K > 0:
             Ss.select_elements(ind)
             S.id.read(ms_k, Ss, tttI)
 
-            ttI[j] = np.sum(tttI)
+            ttI[j] = bn.nansum(tttI)
             j += NPROCS
 
         comm.Reduce([ttI, MPI.FLOAT], [tI, MPI.FLOAT])
 
         if rank == 0:
-            I[k] = ii[np.argmax(tI)]
+            I[k] = ii[bn.nanargmax(tI)]
 
     I.sort()
     comm.Bcast([I, MPI.INT])
@@ -335,7 +351,7 @@ if K > 0:
         Ss.select_hyperslab((i, 0), (1, P.N))
         S.id.read(ms_l, Ss, tSl)
 
-        tC[i - tb] = np.argmax(tSl[I])
+        tC[i - tb] = bn.nanargmax(tSl[I])
 
     comm.Gather([tC, MPI.INT], [C, MPI.INT])
 
