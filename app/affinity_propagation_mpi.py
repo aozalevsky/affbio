@@ -62,7 +62,7 @@ params = {
 P = Bunch(params)
 
 debug = False
-debug = True
+#debug = True
 
 if rank == 0:
     t0 = time.time()
@@ -120,92 +120,98 @@ if rank == 0:
     P.N = N
 
     #Fit to memory
-    MEM = 500 * 10**6
+    MEM = 500 * 10 ** 6
     #MEM = psutil.phymem_usage().available
     tt = np.arange(1, dtype=np.float)
     ts = sys.getsizeof(tt) + P.N * sys.getsizeof(tt[0])
     ts *= 15  # Estimated number of used arrays
-    print ts
     tl = MEM // ts
-    print tl
     if tl >= l:
         tl = l
     else:
         while l % tl > 0:
             tl -= 1
-    print tl
+    print "Cache size is %d of %d per process" % (tl, l)
     P.l = l
     P.ll = tl
 
 P = comm.bcast(P)
 
+N = P.N
+l = P.l
+ll = P.ll
+damping = P.damping
+max_iter = P.max_iter
+conv_iter = P.conv_iter
+
 Ss = S.id.get_space()
 
-tS = np.ndarray((P.ll, P.N), dtype=np.float)
-tSl = np.ndarray((P.N,), dtype=np.float)
+tS = np.ndarray((ll, N), dtype=np.float)
+tSl = np.ndarray((N,), dtype=np.float)
 tdS = np.ndarray((1,), dtype=np.float)
 
 TMf = h5py.File(P.TMfn, 'w', driver='mpio', comm=comm)
 TMf.atomic = True
 
-R = TMf.create_dataset('R', (P.N, P.N), dtype=np.float)
+R = TMf.create_dataset('R', (N, N), dtype=np.float)
 Rs = R.id.get_space()
-tRold = np.ndarray((P.ll, P.N), dtype=np.float)
-tR = np.ndarray((P.ll, P.N), dtype=np.float)
-tdR = np.ndarray((P.l,), dtype=np.float)
+tRold = np.ndarray((ll, N), dtype=np.float)
+tR = np.ndarray((ll, N), dtype=np.float)
+tdR = np.ndarray((l,), dtype=np.float)
 
-Rp = TMf.create_dataset('Rp', (P.N, P.N), dtype=np.float)
+Rp = TMf.create_dataset('Rp', (N, N), dtype=np.float)
 
 Rps = Rp.id.get_space()
-tRp = np.ndarray((P.ll, P.N), dtype=np.float)
-tRpa = np.ndarray((P.N, P.ll), dtype=np.float)
+tRp = np.ndarray((ll, N), dtype=np.float)
+tRpa = np.ndarray((N, ll), dtype=np.float)
 
-#A = TMf.create_dataset('A', (P.N, P.N), dtype=np.float, chunks=(100, 100))
-#A = TMf.create_dataset('A', (P.N, P.N), dtype=np.float, chunks=(1, P.N))
-A = TMf.create_dataset('A', (P.N, P.N), dtype=np.float)
+#A = TMf.create_dataset('A', (N, N), dtype=np.float, chunks=(100, 100))
+#A = TMf.create_dataset('A', (N, N), dtype=np.float, chunks=(1, N))
+A = TMf.create_dataset('A', (N, N), dtype=np.float)
 As = A.id.get_space()
 
-tAS = np.ndarray((P.ll, P.N), dtype=np.float)
-tdA = np.ndarray((P.l,), dtype=np.float)
+tAS = np.ndarray((ll, N), dtype=np.float)
+tdA = np.ndarray((l,), dtype=np.float)
 
-tA = np.ndarray((P.N, P.ll), dtype=np.float)
-tAold = np.ndarray((P.N, P.ll), dtype=np.float)
+tA = np.ndarray((N, ll), dtype=np.float)
+tAold = np.ndarray((N, ll), dtype=np.float)
 
-e = np.ndarray((P.N, P.conv_iter), dtype=np.int)
-tE = np.ndarray((P.N,), dtype=np.int)
-ttE = np.ndarray((P.l,), dtype=np.int)
+e = np.ndarray((N, conv_iter), dtype=np.int)
+tE = np.ndarray((N,), dtype=np.int)
+ttE = np.ndarray((l,), dtype=np.int)
 
-ms = h5s.create_simple((P.ll, P.N))
+ms = h5s.create_simple((ll, N))
 
-ms_l = h5s.create_simple((P.N,))
+ms_l = h5s.create_simple((N,))
 ms_e = h5s.create_simple((1,))
 
 z = - np.finfo(np.double).max
 
-tb, te = task(rank, P.l)
-#P.ll = P.l // NCORES
+tb, te = task(rank, l)
+#ll = l // NCORES
 
+converged = False
 
-for it in xrange(P.max_iter):
+for it in xrange(max_iter):
     if rank == 0:
         tit = time.time()
 
     # Compute responsibilities
-    for i in xrange(tb, te, P.ll):
-        Ss.select_hyperslab((i, 0), (P.ll, P.N))
+    for i in xrange(tb, te, ll):
+        Ss.select_hyperslab((i, 0), (ll, N))
         S.id.read(ms, Ss, tS)
         #tS = S[i, :]
 
-        As.select_hyperslab((i, 0), (P.ll, P.N))
+        As.select_hyperslab((i, 0), (ll, N))
         A.id.read(ms, As, tAS)
         #tAS = A[i, :]
         tAS += tS
 
-        Rs.select_hyperslab((i, 0), (P.ll, P.N))
+        Rs.select_hyperslab((i, 0), (ll, N))
         R.id.read(ms, Rs, tRold)
         #tRold = R[i, :]
 
-        for ii in xrange(P.ll):
+        for ii in xrange(ll):
 
             tI = bn.nanargmax(tAS[ii])
             tY = tAS[ii][tI]
@@ -214,7 +220,7 @@ for it in xrange(P.max_iter):
 
             tR[ii] = tS[ii] - tY
             tR[ii][tI] = tS[ii][tI] - tY2
-            tR[ii] = (1 - P.damping) * tR[ii] + P.damping * tRold[ii]
+            tR[ii] = (1 - damping) * tR[ii] + damping * tRold[ii]
 
             tdR[i - tb + ii] = tR[ii][i + ii]
             tRp[ii] = np.maximum(tR[ii], 0)
@@ -223,56 +229,49 @@ for it in xrange(P.max_iter):
         R.id.write(ms, Rs, tR)
         #R[i, :] = tR
 
-        Rps.select_hyperslab((i, 0), (P.ll, P.N))
+        Rps.select_hyperslab((i, 0), (ll, N))
         Rp.id.write(ms, Rps, tRp)
         #Rp[i, :] = tRp
 
     comm.Barrier()
 
     # Compute availabilities
-    for j in xrange(tb, te, P.ll):
+    for j in xrange(tb, te, ll):
 
-        As.select_hyperslab((0, j), (P.N, P.ll))
+        As.select_hyperslab((0, j), (N, ll))
         A.id.read(ms, As, tAold)
         #tAold = A[:, j]
 
-        Rps.select_hyperslab((0, j), (P.N, P.ll))
+        Rps.select_hyperslab((0, j), (N, ll))
         Rp.id.read(ms, Rps, tRpa)
         #tRp = Rp[:, j]
 
-        for jj in xrange(P.ll):
+        for jj in xrange(ll):
             tA[:, jj] = bn.nansum(tRpa[:, jj]) - tRpa[:, jj]
 
             tdA[j - tb + jj] = tA[j + jj, jj]
             tA[:, jj] = np.minimum(tA[:, jj], 0)
             tA[j + jj, jj] = tdA[j - tb + jj]
 
-            tA[:, jj] = (1 - P.damping) * tA[:, jj] + P.damping * tAold[:, jj]
+            tA[:, jj] = (1 - damping) * tA[:, jj] + damping * tAold[:, jj]
 
         A.id.write(ms, As, tA)
-        #A[:, j] = (1 - P.damping) * tA + P.damping * tAold
+        #A[:, j] = (1 - damping) * tA + damping * tAold
 
-    K = 0
-
-    for i in xrange(tb, te):
-        n = 1 if ((tdA[i - tb] + tdR[i - tb]) > 0) else 0
-
-        ttE[i - tb] = n
-        K += n
+    ttE = np.array(((tdA + tdR) > 0), dtype=np.int)
+    K = bn.nansum(ttE)
 
     comm.Gather([ttE, MPI.INT], [tE, MPI.INT])
     comm.Bcast([tE, MPI.INT])
-    e[:, it % P.conv_iter] = tE
+    e[:, it % conv_iter] = tE
 
-    converged = False
-
-    if it >= P.conv_iter:
+    if it >= conv_iter:
 
         se = 0
 
         for i in xrange(tb, te):
             n = bn.nansum(e[i, :])
-            if n == P.conv_iter or n == 0:
+            if n == conv_iter or n == 0:
                 se += 1
 
         K = comm.allreduce(K)
@@ -280,7 +279,7 @@ for it in xrange(P.max_iter):
 
         if rank == 0:
 
-            converged = (se == P.N)
+            converged = (se == N)
 
             if (converged is True) and (K > 0):
                 if P.verbose is True:
@@ -302,13 +301,12 @@ for it in xrange(P.max_iter):
 if K > 0:
 
     I = np.nonzero(e[:, 0])[0]
-    C = np.zeros((P.N,), dtype=np.int)
-    tC = np.zeros((P.l,), dtype=np.int)
-
+    C = np.zeros((N,), dtype=np.int)
+    tC = np.zeros((l,), dtype=np.int)
 
     for i in xrange(tb, te):
 
-        Ss.select_hyperslab((i, 0), (1, P.N))
+        Ss.select_hyperslab((i, 0), (1, N))
         S.id.read(ms_l, Ss, tSl)
 
         tC[i - tb] = bn.nanargmax(tSl[I])
@@ -348,7 +346,7 @@ if K > 0:
     comm.Bcast([I, MPI.INT])
 
     for i in xrange(tb, te):
-        Ss.select_hyperslab((i, 0), (1, P.N))
+        Ss.select_hyperslab((i, 0), (1, N))
         S.id.read(ms_l, Ss, tSl)
 
         tC[i - tb] = bn.nanargmax(tSl[I])
@@ -361,7 +359,7 @@ if K > 0:
 else:
     if rank == 0:
         I = np.empty(())
-        C = np.empty((P.N, ))
+        C = np.empty((N, ))
         C.fill(np.nan)
 
 if rank == 0:
