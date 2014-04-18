@@ -14,18 +14,21 @@ LINKFORSHARED := $(shell $(PYTHON) -c "import distutils.sysconfig; print(distuti
 LIBS := $(shell $(PYTHON) -c "import distutils.sysconfig; print(distutils.sysconfig.get_config_var('LIBS'))")
 SYSLIBS :=  $(shell $(PYTHON) -c "import distutils.sysconfig; print(distutils.sysconfig.get_config_var('SYSLIBS'))")
 
+CYTHON := cython
+
 affinity_propagation_mpi: affinity_propagation_mpi.o
 	$(LINKCC) -fopenmp -o $@ $^ -L$(LIBDIR1) -L$(LIBDIR2) -l$(PYLIB) $(LIBS) $(SYSLIBS) $(LINKFORSHARED)
 
 affinity_propagation_mpi.o: affinity_propagation_mpi.c
 	$(CC) -c $^ -I$(INCDIR) -I$(PLATINCDIR)
 
-CYTHON := cython
 
 affinity_propagation_mpi.c: affinity_propagation_mpi.pyx
 	@$(CYTHON) -a --embed affinity_propagation_mpi.pyx
 
+
 all: affinity_propagation_mpi
+
 
 clean:
 	@echo Cleaning Demos/embed
