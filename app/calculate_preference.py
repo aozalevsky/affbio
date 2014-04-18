@@ -21,11 +21,12 @@ from h5py import h5s
 
 #Livestats for median
 #from livestats import livestats
-import pyximport; pyximport.install()
+import pyximport
+pyximport.install()
 import lvc
 
 debug = False
-debug = True
+#debug = True
 
 #Get current time
 t0 = time.time()
@@ -90,7 +91,7 @@ t1 = time.time()
 ms = h5s.create_simple((1, 1))
 
 print 'Med', median
-print 'NP', np.median(CM)
+#print 'NP', np.median(CM)
 
 for i in xrange(N):
     if ((i + 1) % l) == 0:
@@ -99,8 +100,8 @@ for i in xrange(N):
     CM.id.write(ms, CMs, tCM)
 
 
-#CM.attrs['preference'] = median
-CM.attrs['preference'] = np.median(CM)
+CM.attrs['preference'] = median
+#CM.attrs['preference'] = np.median(CM)
 print "Time is %s" % (time.time() - t0)
 
 if debug is True:
