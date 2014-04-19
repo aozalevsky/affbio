@@ -25,11 +25,13 @@ import pyximport
 pyximport.install()
 import lvc
 
-debug = False
-#debug = True
+print 'Calculating median'
 
 #Get current time
 t0 = time.time()
+
+debug = False
+#debug = True
 
 if debug is True:
     import cProfile
@@ -37,6 +39,8 @@ if debug is True:
     import StringIO
     pr = cProfile.Profile()
     pr.enable()
+
+
 
 #Init cluster matrix
 #Get file name
@@ -88,19 +92,13 @@ for i in xrange(N):
 #level, median = med.quantiles()[0]
 median = med.quantile()
 t1 = time.time()
+tdCM = np.array([median], dtype=np.float32)
 ms = h5s.create_simple((1, 1))
 
 print 'Med', median
-#print 'NP', np.median(CM)
+print 'NP', np.median(CM)
 
-for i in xrange(N):
-    if ((i + 1) % l) == 0:
-        print 'Writing preference to row %d of %d' % ((i + 1), N)
-    CMs.select_elements([(i, i)])
-    CM.id.write(ms, CMs, tCM)
-
-
-CM.attrs['preference'] = median
+CM.attrs['median'] = median
 #CM.attrs['preference'] = np.median(CM)
 print "Time is %s" % (time.time() - t0)
 

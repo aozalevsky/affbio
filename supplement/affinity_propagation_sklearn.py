@@ -13,14 +13,13 @@ f = h5py.File(matf, 'r')
 #rmsd_matrix = f['rmsd']
 #Table for clusterization
 cl_matrix = f['cluster']
-pref = f['cluster'].attrs['preference']
+pref = f['cluster'].attrs['median']
 #Reread structures by every process
 
 t0 = dt.datetime.now()
 af = apn(
     affinity="precomputed",
     verbose=True,
-#    preference=-0.0122545,
     convergence_iter=15,
     max_iter=2000,
     preference=pref,

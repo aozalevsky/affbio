@@ -43,7 +43,7 @@ class Bunch(object):
 #Get file name
 Sfn = 'aff_cluster_matrix.hdf5'
 #Open matrix file in parallel mode
-Sf = h5py.File(Sfn, 'r', driver='mpio', comm=comm)
+Sf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
 Sf.atomic = True
 #Open table with data for clusterization
 S = Sf['cluster']
@@ -83,6 +83,13 @@ if rank == 0:
         raise ValueError("S must be a square array (shape=%s)" % repr((N, N1)))
     else:
         P.N = N
+
+    try:
+        preference = S.attrs['median']
+        print preference
+        P.preference = preference
+    except:
+        raise ValueError('Unable to get median from cluster matrix')
 
     conv_iter = 15
 
@@ -125,13 +132,15 @@ if rank == 0:
     tt = np.arange(1, dtype=np.float)
     ts = sys.getsizeof(tt) + P.N * sys.getsizeof(tt[0])
     ts *= 15  # Estimated number of used arrays
+    print ts
     tl = MEM // ts
+    print tl
     if tl >= l:
         tl = l
     else:
         while l % tl > 0:
             tl -= 1
-    print "Cache size is %d of %d per process" % (tl, l)
+    print tl
     P.l = l
     P.ll = tl
 
@@ -140,15 +149,34 @@ P = comm.bcast(P)
 N = P.N
 l = P.l
 ll = P.ll
+preference = P.preference
 damping = P.damping
 max_iter = P.max_iter
 conv_iter = P.conv_iter
+
+tb, te = task(rank, l)
 
 Ss = S.id.get_space()
 
 tS = np.ndarray((ll, N), dtype=np.float)
 tSl = np.ndarray((N,), dtype=np.float)
 tdS = np.ndarray((1,), dtype=np.float)
+
+ms = h5s.create_simple((ll, N))
+
+#Place preference on diagonal
+random_state = np.random.RandomState(0)
+x = np.finfo(np.double).eps
+y = np.finfo(np.double).tiny * 100
+
+
+for i in xrange(tb, te, ll):
+    Ss.select_hyperslab((i, 0), (ll, N))
+    S.id.read(ms, Ss, tS)
+    for il in xrange(ll):
+        tS[il, i + il] = (preference * x + y) * random_state.randn() \
+            + preference
+    S.id.write(ms, Ss, tS)
 
 TMf = h5py.File(P.TMfn, 'w', driver='mpio', comm=comm)
 TMf.atomic = True
@@ -180,14 +208,12 @@ e = np.ndarray((N, conv_iter), dtype=np.int)
 tE = np.ndarray((N,), dtype=np.int)
 ttE = np.ndarray((l,), dtype=np.int)
 
-ms = h5s.create_simple((ll, N))
 
 ms_l = h5s.create_simple((N,))
 ms_e = h5s.create_simple((1,))
 
 z = - np.finfo(np.double).max
 
-tb, te = task(rank, l)
 #ll = l // NCORES
 
 converged = False
@@ -195,7 +221,7 @@ converged = False
 for it in xrange(max_iter):
     if rank == 0:
         tit = time.time()
-
+    ind = np.arange(ll)
     # Compute responsibilities
     for i in xrange(tb, te, ll):
         Ss.select_hyperslab((i, 0), (ll, N))
@@ -211,20 +237,19 @@ for it in xrange(max_iter):
         R.id.read(ms, Rs, tRold)
         #tRold = R[i, :]
 
-        for ii in xrange(ll):
+        tI = bn.nanargmax(tAS, axis=1)
+        tY = tAS[ind, tI]
+        tAS[ind, tI[ind]] = z
+        tY2 = bn.nanmax(tAS, axis=1)
 
-            tI = bn.nanargmax(tAS[ii])
-            tY = tAS[ii][tI]
-            tAS[ii][tI] = z
-            tY2 = bn.nanmax(tAS[ii])
+        tR = tS - tY[:, np.newaxis]
+        tR[ind, tI[ind]] = tS[ind, tI[ind]] - tY2[ind]
+        tR = (1 - damping) * tR + damping * tRold
 
-            tR[ii] = tS[ii] - tY
-            tR[ii][tI] = tS[ii][tI] - tY2
-            tR[ii] = (1 - damping) * tR[ii] + damping * tRold[ii]
-
-            tdR[i - tb + ii] = tR[ii][i + ii]
-            tRp[ii] = np.maximum(tR[ii], 0)
-            tRp[ii][i + ii] = tdR[i - tb + ii]
+        tRp = np.maximum(tR, 0)
+        for il in xrange(ll):
+            tRp[il, i + il] = tR[il, i + il]
+            tdR[i - tb + il] = tR[il, i + il]
 
         R.id.write(ms, Rs, tR)
         #R[i, :] = tR
@@ -246,42 +271,36 @@ for it in xrange(max_iter):
         Rp.id.read(ms, Rps, tRpa)
         #tRp = Rp[:, j]
 
-        for jj in xrange(ll):
-            tA[:, jj] = bn.nansum(tRpa[:, jj]) - tRpa[:, jj]
+        tA = bn.nansum(tRpa, axis=0)[np.newaxis, :] - tRpa
+        for jl in xrange(ll):
+            tdA[j - tb + jl] = tA[j + jl, jl]
 
-            tdA[j - tb + jj] = tA[j + jj, jj]
-            tA[:, jj] = np.minimum(tA[:, jj], 0)
-            tA[j + jj, jj] = tdA[j - tb + jj]
+        tA = np.minimum(tA, 0)
 
-            tA[:, jj] = (1 - damping) * tA[:, jj] + damping * tAold[:, jj]
+        for jl in xrange(ll):
+            tA[j + jl, jl] = tdA[j - tb + jl]
+
+        tA = (1 - damping) * tA + damping * tAold
+
+        for jl in xrange(ll):
+            tdA[j - tb + jl] = tA[j + jl, jl]
 
         A.id.write(ms, As, tA)
         #A[:, j] = (1 - damping) * tA + damping * tAold
-
     ttE = np.array(((tdA + tdR) > 0), dtype=np.int)
-    K = bn.nansum(ttE)
 
     comm.Gather([ttE, MPI.INT], [tE, MPI.INT])
     comm.Bcast([tE, MPI.INT])
     e[:, it % conv_iter] = tE
+    K = bn.nansum(tE)
 
     if it >= conv_iter:
 
-        se = 0
-
-        for i in xrange(tb, te):
-            n = bn.nansum(e[i, :])
-            if n == conv_iter or n == 0:
-                se += 1
-
-        K = comm.allreduce(K)
-        se = comm.reduce(se)
-
         if rank == 0:
+            se = bn.nansum(e, axis=1)
+            converged = (bn.nansum((se == conv_iter) + (se == 0)) == N)
 
-            converged = (se == N)
-
-            if (converged is True) and (K > 0):
+            if (converged == np.bool_(True)) and (K > 0):
                 if P.verbose is True:
                     print("Converged after %d iterations." % it)
                 converged = True
