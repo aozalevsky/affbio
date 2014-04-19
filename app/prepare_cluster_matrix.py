@@ -19,9 +19,9 @@ rank = comm.rank
 import h5py
 from h5py import h5s
 
-print 'Preparing cluster matrix'
 
 if rank == 0:
+    print 'Preparing cluster matrix'
     #Get current time
     t0 = time.time()
 

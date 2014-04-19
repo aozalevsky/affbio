@@ -61,6 +61,7 @@ debug = False
 #debug = True
 
 if rank == 0:
+    print 'Clusterizing matrix'
     t0 = time.time()
 #    import cProfile, pstats, StringIO
 #    pr = cProfile.Profile()

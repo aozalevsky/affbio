@@ -23,9 +23,9 @@ from h5py import h5s
 import pyRMSD.RMSDCalculator
 from pyRMSD import condensedMatrix
 
-print "Calculating RMSD matrix"
 
 if rank == 0:
+    print "Calculating RMSD matrix"
     #Get current time
     t0 = time.time()
 
