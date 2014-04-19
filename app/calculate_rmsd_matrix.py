@@ -23,13 +23,14 @@ from h5py import h5s
 import pyRMSD.RMSDCalculator
 from pyRMSD import condensedMatrix
 
-
-debug = False
-#debug = True
+print "Calculating RMSD matrix"
 
 if rank == 0:
     #Get current time
     t0 = time.time()
+
+    debug = False
+    #debug = True
 
     if debug is True:
         import cProfile
@@ -118,6 +119,9 @@ ic = S[i * l: (i + 1) * l]
 jc = ic
 
 for c in xrange(0, m):
+    if rank == 0:
+        tit = time.time()
+
     try:
         assert i == j
         calc_diag_chunk(ic, tS)
@@ -128,7 +132,8 @@ for c in xrange(0, m):
     RM.id.write(ms, RMs, tS)
 
     if rank == 0:
-        print "Step %d of %d" % (c, m)
+        teit = time.time()
+        print "Step %d of %d T %s" % (c, m, teit - tit)
 
     if 0 < (rank - c):
         j = j - 1

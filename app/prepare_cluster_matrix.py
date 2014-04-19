@@ -19,12 +19,14 @@ rank = comm.rank
 import h5py
 from h5py import h5s
 
-debug = False
-#debug = True
+print 'Preparing cluster matrix'
 
 if rank == 0:
     #Get current time
     t0 = time.time()
+
+    debug = False
+    #debug = True
 
     if debug is True:
         import cProfile
