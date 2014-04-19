@@ -377,8 +377,8 @@ if K > 0:
 
 else:
     if rank == 0:
-        I = np.empty(())
-        C = np.empty((N, ))
+        I = np.zeros(())
+        C = np.zeros((N, ))
         C.fill(np.nan)
 
 if rank == 0:

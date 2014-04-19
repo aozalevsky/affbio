@@ -58,7 +58,7 @@ def calc_diag_chunk(ic, tS):
 
 def calc_chunk(ic, jc, tS):
     ln, n, d = ic.shape
-    ttS = np.empty((ln + 1, n, d))
+    ttS = np.zeros((ln + 1, n, d))
     ttS[1:] = jc
     for i in xrange(ln):
         ttS[0] = ic[i]
