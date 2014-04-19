@@ -131,8 +131,9 @@ if rank == 0:
     #MEM = 500 * 10 ** 6
     MEM = psutil.phymem_usage().available / NPROCS_LOCAL
     tt = np.arange(1, dtype=np.float)
-    ts = sys.getsizeof(tt) + P.N * sys.getsizeof(tt[0])
-    ts *= 15  # Estimated number of used arrays
+    ts = sys.getsizeof(tt) + sys.getsizeof(tt[0]) * N
+    ts *= 8
+    MEM -= ts  # Estimated number of used arrays
     tl = MEM // ts
     if tl >= l:
         tl = l
