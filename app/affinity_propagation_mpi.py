@@ -24,6 +24,11 @@ rank = comm.rank
 import h5py
 from h5py import h5s
 
+from h5py import h5p, h5fd
+
+dxpl = h5p.create(h5p.DATASET_XFER)
+dxpl.set_dxpl_mpio(h5fd.MPIO_COLLECTIVE)
+
 
 def task(rk, l):
     b = rk * l
@@ -40,7 +45,7 @@ class Bunch(object):
 Sfn = 'aff_cluster_matrix.hdf5'
 #Open matrix file in parallel mode
 Sf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
-Sf.atomic = True
+#Sf.atomic = True
 #Open table with data for clusterization
 S = Sf['cluster']
 
@@ -166,11 +171,11 @@ y = np.finfo(np.double).tiny * 100
 
 for i in xrange(tb, te, ll):
     Ss.select_hyperslab((i, 0), (ll, N))
-    S.id.read(ms, Ss, tS)
+    S.id.read(ms, Ss, tS, dxpl=dxpl)
     for il in xrange(ll):
         tS[il, i + il] = (preference * x + y) * random_state.randn() \
             + preference
-    S.id.write(ms, Ss, tS)
+    S.id.write(ms, Ss, tS, dxpl=dxpl)
 
 TMf = h5py.File(P.TMfn, 'w', driver='mpio', comm=comm)
 TMf.atomic = True
@@ -218,11 +223,11 @@ for it in xrange(max_iter):
     # Compute responsibilities
     for i in xrange(tb, te, ll):
         Ss.select_hyperslab((i, 0), (ll, N))
-        S.id.read(ms, Ss, tS)
+        S.id.read(ms, Ss, tS, dxpl=dxpl)
         #tS = S[i, :]
 
         As.select_hyperslab((i, 0), (ll, N))
-        A.id.read(ms, As, tAS)
+        A.id.read(ms, As, tAS, dxpl=dxpl)
         #tAS = A[i, :]
         tAS += tS
 
@@ -244,11 +249,12 @@ for it in xrange(max_iter):
             tRp[il, i + il] = tR[il, i + il]
             tdR[i - tb + il] = tR[il, i + il]
 
-        R.id.write(ms, Rs, tR)
+        R.id.write(ms, Rs, tR, dxpl=dxpl)
         #R[i, :] = tR
 
         Rps.select_hyperslab((i, 0), (ll, N))
-        Rp.id.write(ms, Rps, tRp)
+        Rp.id.write(ms, Rps, tRp, dxpl=dxpl)
+
         #Rp[i, :] = tRp
 
     comm.Barrier()
@@ -261,7 +267,7 @@ for it in xrange(max_iter):
         #tAold = A[:, j]
 
         Rps.select_hyperslab((0, j), (N, ll))
-        Rp.id.read(ms, Rps, tRpa)
+        Rp.id.read(ms, Rps, tRpa, dxpl=dxpl)
         #tRp = Rp[:, j]
 
         tA = bn.nansum(tRpa, axis=0)[np.newaxis, :] - tRpa
@@ -278,8 +284,9 @@ for it in xrange(max_iter):
         for jl in xrange(ll):
             tdA[j - tb + jl] = tA[j + jl, jl]
 
-        A.id.write(ms, As, tA)
+        A.id.write(ms, As, tA, dxpl=dxpl)
         #A[:, j] = (1 - damping) * tA + damping * tAold
+
     ttE = np.array(((tdA + tdR) > 0), dtype=np.int)
 
     comm.Gather([ttE, MPI.INT], [tE, MPI.INT])
