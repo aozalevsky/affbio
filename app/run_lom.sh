@@ -14,7 +14,7 @@ mpirun --hostfile $HOSTFILE /home/users/golovin/progs/python2.7/bin/python2.7 /h
 #Prepare matrix
 mpirun --hostfile $HOSTFILE /home/users/golovin/progs/python2.7/bin/python2.7 /home/users/golovin/progs/aff_cluster/app/prepare_cluster_matrix.py
 #Calculate and set preference
-srun -n 1 /home/users/golovin/progs/python2.7/bin/python2.7 /home/users/golovin/progs/aff_cluster/app/calculate_preference.py
+srun -n 1 /home/users/golovin/progs/python2.7/bin/python2.7 /home/users/golovin/progs/aff_cluster/app/calculate_median.py
 #Cluster matrix
 mpirun --hostfile $HOSTFILE /home/users/golovin/progs/python2.7/bin/python2.7 /home/users/golovin/progs/aff_cluster/app/affinity_propagation_mpi.py
 
