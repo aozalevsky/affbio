@@ -293,9 +293,6 @@ for it in xrange(max_iter):
     if it >= conv_iter:
 
         if rank == 0:
-            teit = time.time()
-            print 'It %d K %d T %s' % (it + 1, K, teit - tit)
-
             se = bn.nansum(e, axis=1)
             converged = (bn.nansum((se == conv_iter) + (se == 0)) == N)
 
@@ -307,7 +304,6 @@ for it in xrange(max_iter):
                 converged = False
 
         converged = comm.bcast(converged, root=0)
-
 
     if converged is True:
         break

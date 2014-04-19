@@ -117,6 +117,8 @@ ms = h5s.create_simple((l, l))
 i, j = rank, rank
 
 for c in xrange(m):
+    if rank == 0:
+        tit = time.time()
     RMs.select_hyperslab((i * l, j * l), (l, l))
     RM.id.read(ms, RMs, tRM)
 
@@ -142,7 +144,8 @@ for c in xrange(m):
     CM.id.write(ms, CMs, ttCM)
 
     if rank == 0:
-        print "Step %d of %d" % (c, m)
+        teit = time.time()
+        print "Step %d of %d T %s" % (c, m, teit - tit)
 
     if (rank - c) > 0:
         j = j - 1
