@@ -70,7 +70,7 @@ if l <= 0:
 #Init calculations
 #med = livestats.LiveStats()
 med = lvc.Quantile(0.5)
-madd = np.vectorize(med.add)
+madd = )np.vectorize(med.add)
 
 tCM = np.zeros((N,), dtype=np.float)
 ms = h5s.create_simple((N,))
@@ -92,11 +92,11 @@ for i in xrange(N):
 #level, median = med.quantiles()[0]
 median = med.quantile()
 t1 = time.time()
-tdCM = np.array([median], dtype=np.float32)
+tdCM = np.array([median], dtype=np.float)
 ms = h5s.create_simple((1, 1))
 
 print 'Med', median
-print 'NP', np.median(CM)
+#print 'NP', np.median(CM)
 
 CM.attrs['median'] = median
 #CM.attrs['preference'] = np.median(CM)
