@@ -14,6 +14,7 @@ import bottleneck as bn
 from mpi4py import MPI
 #Get MPI info
 comm = MPI.COMM_WORLD
+NPROCS_LOCAL = int(os.environ['OMPI_COMM_WORLD_LOCAL_SIZE'])
 #Get number of processes
 NPROCS = comm.size
 #Get rank
@@ -22,11 +23,6 @@ rank = comm.rank
 #H5PY for storage
 import h5py
 from h5py import h5s
-
-import multiprocessing
-
-NCORES = multiprocessing.cpu_count()
-NCORES = NCORES / NPROCS
 
 
 def task(rk, l):
@@ -86,7 +82,6 @@ if rank == 0:
 
     try:
         preference = S.attrs['median']
-        print preference
         P.preference = preference
     except:
         raise ValueError('Unable to get median from cluster matrix')
@@ -119,7 +114,7 @@ if rank == 0:
     #P.TMfn = pj('/tmp', 'tmp.hdf5')
     P.TMfn = 'aff_tmp.hdf5'
 
-    r = N % (NPROCS * NCORES)
+    r = N % NPROCS
     N -= r
     l = N // NPROCS
     if r > 0:
@@ -127,22 +122,20 @@ if rank == 0:
     P.N = N
 
     #Fit to memory
-    MEM = 500 * 10 ** 6
-    #MEM = psutil.phymem_usage().available
+    #MEM = 500 * 10 ** 6
+    MEM = psutil.phymem_usage().available / NPROCS_LOCAL
     tt = np.arange(1, dtype=np.float)
     ts = sys.getsizeof(tt) + P.N * sys.getsizeof(tt[0])
     ts *= 15  # Estimated number of used arrays
-    print ts
     tl = MEM // ts
-    print tl
     if tl >= l:
         tl = l
     else:
         while l % tl > 0:
             tl -= 1
-    print tl
     P.l = l
     P.ll = tl
+    print 'Cache size is %d of %d' % (tl, l)
 
 P = comm.bcast(P)
 
@@ -217,11 +210,10 @@ z = - np.finfo(np.double).max
 #ll = l // NCORES
 
 converged = False
-
+ind = np.arange(ll)
 for it in xrange(max_iter):
     if rank == 0:
         tit = time.time()
-    ind = np.arange(ll)
     # Compute responsibilities
     for i in xrange(tb, te, ll):
         Ss.select_hyperslab((i, 0), (ll, N))
@@ -294,25 +286,28 @@ for it in xrange(max_iter):
     e[:, it % conv_iter] = tE
     K = bn.nansum(tE)
 
+    if rank == 0:
+        teit = time.time()
+        print 'It %d K %d T %s' % (it + 1, K, teit - tit)
+
     if it >= conv_iter:
 
         if rank == 0:
+            teit = time.time()
+            print 'It %d K %d T %s' % (it + 1, K, teit - tit)
+
             se = bn.nansum(e, axis=1)
             converged = (bn.nansum((se == conv_iter) + (se == 0)) == N)
 
             if (converged == np.bool_(True)) and (K > 0):
                 if P.verbose is True:
-                    print("Converged after %d iterations." % it)
+                    print("Converged after %d iterations." % (it + 1))
                 converged = True
             else:
                 converged = False
 
         converged = comm.bcast(converged, root=0)
 
-    if rank == 0:
-        teit = time.time()
-
-        print 'It %d K %d T %s' % (it, K, teit - tit)
 
     if converged is True:
         break
