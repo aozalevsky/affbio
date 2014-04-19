@@ -70,7 +70,7 @@ if l <= 0:
 #Init calculations
 #med = livestats.LiveStats()
 med = lvc.Quantile(0.5)
-madd = )np.vectorize(med.add)
+madd = np.vectorize(med.add)
 
 tCM = np.zeros((N,), dtype=np.float)
 ms = h5s.create_simple((N,))
