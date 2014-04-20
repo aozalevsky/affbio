@@ -131,10 +131,10 @@ if rank == 0:
     #MEM = 500 * 10 ** 6
     MEM = psutil.phymem_usage().available / NPROCS_LOCAL
     tt = np.arange(1, dtype=np.float)
-    ts = sys.getsizeof(tt) + sys.getsizeof(tt[0]) * N
-    ts *= 8
-    MEM -= ts  # Estimated number of used arrays
-    tl = MEM // ts
+    ts = (sys.getsizeof(tt) + sys.getsizeof(tt[0]) * N) / 8  # Python give bits
+    ts *= 8  # Allocate memory for e, tE, and ...
+    MEM -= ts  # ----
+    tl = MEM // ts  # Allocate memory for tS, tA, tR....
     if tl >= l:
         tl = l
     else:
