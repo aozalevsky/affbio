@@ -5,6 +5,9 @@ import time
 import os
 import sys
 import psutil
+import gc
+
+gc.disable()
 
 #NumPy for arrays
 import numpy as np
@@ -42,18 +45,19 @@ class Bunch(object):
 
 #Init storage for matrices
 #Get file name
-Sfn = 'aff_cluster_matrix.hdf5'
+SSfn = 'aff_cluster_matrix.hdf5'
 #Open matrix file in parallel mode
-Sf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
-#Sf.atomic = True
+SSf = h5py.File(SSfn, 'r', driver='mpio', comm=comm)
 #Open table with data for clusterization
-S = Sf['cluster']
+SS = SSf['cluster']
+SSs = SS.id.get_space()
 
 params = {
     'N': 0,
     'l': 0,
     'll': 0,
     'TMfn': '',
+    'disk': False,
     'preference': 0.0,
     'conv_iter': 0,
     'max_iter': 0,
@@ -79,7 +83,7 @@ if rank == 0:
         pr = cProfile.Profile()
         pr.enable()
 
-    N, N1 = S.shape
+    N, N1 = SS.shape
 
     if N != N1:
         raise ValueError("S must be a square array (shape=%s)" % repr((N, N1)))
@@ -87,7 +91,7 @@ if rank == 0:
         P.N = N
 
     try:
-        preference = S.attrs['median']
+        preference = SS.attrs['median']
         P.preference = preference
     except:
         raise ValueError('Unable to get median from cluster matrix')
@@ -118,7 +122,7 @@ if rank == 0:
 
     #tmpd = osp.join(osp.abspath(osp.dirname(s.file.filename)), 'tmp.hdf5')
     #P.TMfn = pj('/tmp', 'tmp.hdf5')
-    P.TMfn = 'aff_tmp.hdf5'
+    P.TMfn = 'aff_tmp'
 
     r = N % NPROCS
     N -= r
@@ -128,8 +132,8 @@ if rank == 0:
     P.N = N
 
     #Fit to memory
-    #MEM = 500 * 10 ** 6
     MEM = psutil.phymem_usage().available / NPROCS_LOCAL
+    MEM = 500 * 10 ** 6
     tt = np.arange(1, dtype=np.float)
     ts = (sys.getsizeof(tt) + sys.getsizeof(tt[0]) * N) / 8  # Python give bits
     ts *= 8  # Allocate memory for e, tE, and ...
@@ -138,6 +142,7 @@ if rank == 0:
     if tl >= l:
         tl = l
     else:
+        P.disk = True
         while l % tl > 0:
             tl -= 1
     P.l = l
@@ -149,91 +154,99 @@ P = comm.bcast(P)
 N = P.N
 l = P.l
 ll = P.ll
-preference = P.preference
-damping = P.damping
-max_iter = P.max_iter
-conv_iter = P.conv_iter
+
+ms = h5s.create_simple((ll, N))
+ms_l = h5s.create_simple((N,))
+ms_e = h5s.create_simple((1,))
+
 
 tb, te = task(rank, l)
-
-Ss = S.id.get_space()
 
 tS = np.ndarray((ll, N), dtype=np.float)
 tSl = np.ndarray((N,), dtype=np.float)
 tdS = np.ndarray((1,), dtype=np.float)
 
-ms = h5s.create_simple((ll, N))
 
-#Place preference on diagonal
+if P.disk is True:
+
+    TMLf = h5py.File(P.TMfn + '_' + str(rank) + '.hdf5', 'w')
+
+    S = TMLf.create_dataset('S', (N, N), dtype=np.float)
+    Ss = S.id.get_space()
+
+#Copy input data and
+#place preference on diagonal
+preference = P.preference
 random_state = np.random.RandomState(0)
 x = np.finfo(np.double).eps
 y = np.finfo(np.double).tiny * 100
-
+z = - np.finfo(np.double).max
 
 for i in xrange(tb, te, ll):
-    Ss.select_hyperslab((i, 0), (ll, N))
-    S.id.read(ms, Ss, tS, dxpl=dxpl)
+    SSs.select_hyperslab((i, 0), (ll, N))
+    SS.id.read(ms, SSs, tS, dxpl=dxpl)
     for il in xrange(ll):
         tS[il, i + il] = (preference * x + y) * random_state.randn() \
             + preference
-    S.id.write(ms, Ss, tS, dxpl=dxpl)
+    if P.disk is True:
+        Ss.select_hyperslab((i, 0), (ll, N))
+        S.id.write(ms, Ss, tS)
 
-TMf = h5py.File(P.TMfn, 'w', driver='mpio', comm=comm)
+if P.disk is True:
+    R = TMLf.create_dataset('R', (N, N), dtype=np.float)
+    Rs = R.id.get_space()
+
+tRold = np.zeros((ll, N), dtype=np.float)
+tR = np.zeros((ll, N), dtype=np.float)
+tdR = np.zeros((l,), dtype=np.float)
+
+#Shared storage
+TMf = h5py.File(P.TMfn + '.hdf5', 'w', driver='mpio', comm=comm)
 TMf.atomic = True
 
-R = TMf.create_dataset('R', (N, N), dtype=np.float)
-Rs = R.id.get_space()
-tRold = np.ndarray((ll, N), dtype=np.float)
-tR = np.ndarray((ll, N), dtype=np.float)
-tdR = np.ndarray((l,), dtype=np.float)
-
 Rp = TMf.create_dataset('Rp', (N, N), dtype=np.float)
-
 Rps = Rp.id.get_space()
+
 tRp = np.ndarray((ll, N), dtype=np.float)
 tRpa = np.ndarray((N, ll), dtype=np.float)
 
-#A = TMf.create_dataset('A', (N, N), dtype=np.float, chunks=(100, 100))
-#A = TMf.create_dataset('A', (N, N), dtype=np.float, chunks=(1, N))
 A = TMf.create_dataset('A', (N, N), dtype=np.float)
 As = A.id.get_space()
 
 tAS = np.ndarray((ll, N), dtype=np.float)
+tAold = np.ndarray((N, ll), dtype=np.float)
+tA = np.ndarray((N, ll), dtype=np.float)
 tdA = np.ndarray((l,), dtype=np.float)
 
-tA = np.ndarray((N, ll), dtype=np.float)
-tAold = np.ndarray((N, ll), dtype=np.float)
-
+conv_iter = P.conv_iter
 e = np.ndarray((N, conv_iter), dtype=np.int)
 tE = np.ndarray((N,), dtype=np.int)
 ttE = np.ndarray((l,), dtype=np.int)
 
-
-ms_l = h5s.create_simple((N,))
-ms_e = h5s.create_simple((1,))
-
-z = - np.finfo(np.double).max
-
-#ll = l // NCORES
+damping = P.damping
+max_iter = P.max_iter
 
 converged = False
 ind = np.arange(ll)
+
 for it in xrange(max_iter):
     if rank == 0:
         tit = time.time()
     # Compute responsibilities
     for i in xrange(tb, te, ll):
-        Ss.select_hyperslab((i, 0), (ll, N))
-        S.id.read(ms, Ss, tS, dxpl=dxpl)
+        if P.disk is True:
+            Ss.select_hyperslab((i, 0), (ll, N))
+            S.id.read(ms, Ss, tS)
         #tS = S[i, :]
+            Rs.select_hyperslab((i, 0), (ll, N))
+            R.id.read(ms, Rs, tRold)
+        else:
+            tRold = tR.copy()
 
         As.select_hyperslab((i, 0), (ll, N))
-        A.id.read(ms, As, tAS, dxpl=dxpl)
+        A.id.read(ms, As, tAS)
         #tAS = A[i, :]
         tAS += tS
-
-        Rs.select_hyperslab((i, 0), (ll, N))
-        R.id.read(ms, Rs, tRold)
         #tRold = R[i, :]
 
         tI = bn.nanargmax(tAS, axis=1)
@@ -246,17 +259,19 @@ for it in xrange(max_iter):
         tR = (1 - damping) * tR + damping * tRold
 
         tRp = np.maximum(tR, 0)
+
         for il in xrange(ll):
             tRp[il, i + il] = tR[il, i + il]
             tdR[i - tb + il] = tR[il, i + il]
 
-        R.id.write(ms, Rs, tR, dxpl=dxpl)
-        #R[i, :] = tR
+        if P.disk is True:
+            R.id.write(ms, Rs, tR)
+            #R[i, :] = tR
 
         Rps.select_hyperslab((i, 0), (ll, N))
         Rp.id.write(ms, Rps, tRp, dxpl=dxpl)
 
-        #Rp[i, :] = tRp
+            #Rp[i, :] = tRp
 
     comm.Barrier()
 
@@ -264,7 +279,7 @@ for it in xrange(max_iter):
     for j in xrange(tb, te, ll):
 
         As.select_hyperslab((0, j), (N, ll))
-        A.id.read(ms, As, tAold)
+        A.id.read(ms, As, tAold, dxpl=dxpl)
         #tAold = A[:, j]
 
         Rps.select_hyperslab((0, j), (N, ll))
@@ -286,7 +301,6 @@ for it in xrange(max_iter):
             tdA[j - tb + jl] = tA[j + jl, jl]
 
         A.id.write(ms, As, tA, dxpl=dxpl)
-        #A[:, j] = (1 - damping) * tA + damping * tAold
 
     ttE = np.array(((tdA + tdR) > 0), dtype=np.int)
 
@@ -324,9 +338,11 @@ if K > 0:
     tC = np.zeros((l,), dtype=np.int)
 
     for i in xrange(tb, te):
-
-        Ss.select_hyperslab((i, 0), (1, N))
-        S.id.read(ms_l, Ss, tSl)
+        if P.disk is True:
+            Ss.select_hyperslab((i, 0), (1, N))
+            S.id.read(ms_l, Ss, tSl)
+        else:
+            tSl = tS[i - tb]
 
         tC[i - tb] = bn.nanargmax(tSl[I])
 
@@ -349,9 +365,8 @@ if K > 0:
         j = rank
         while j < tN:
             ind = [(ii[i], ii[j]) for i in xrange(tN)]
-
-            Ss.select_elements(ind)
-            S.id.read(ms_k, Ss, tttI)
+            SSs.select_elements(ind)
+            SS.id.read(ms_k, SSs, tttI)
 
             ttI[j] = bn.nansum(tttI)
             j += NPROCS
@@ -365,8 +380,11 @@ if K > 0:
     comm.Bcast([I, MPI.INT])
 
     for i in xrange(tb, te):
-        Ss.select_hyperslab((i, 0), (1, N))
-        S.id.read(ms_l, Ss, tSl)
+        if P.disk is True:
+            Ss.select_hyperslab((i, 0), (1, N))
+            S.id.read(ms_l, Ss, tSl)
+        else:
+            tSl = tS[i - tb]
 
         tC[i - tb] = bn.nanargmax(tSl[I])
 
@@ -381,8 +399,15 @@ else:
         C = np.zeros((N, ))
         C.fill(np.nan)
 
+#Cleanup
+SSf.close()
+TMf.close()
+if P.disk is True:
+    TMLf.close()
+    os.remove(P.TMfn + '_' + str(rank) + '.hdf5')
+
 if rank == 0:
-    os.remove(P.TMfn)
+    os.remove(P.TMfn + '.hdf5')
     t1 = time.time()
     print I[:], C[:]
     I.dump('aff.centers')
@@ -396,7 +421,3 @@ if rank == 0:
         ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
         ps.print_stats()
         print s.getvalue()
-
-#Cleanup
-Sf.close()
-TMf.close()
