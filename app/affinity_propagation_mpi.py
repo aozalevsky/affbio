@@ -7,6 +7,7 @@ import sys
 import psutil
 import gc
 
+
 gc.disable()
 
 #NumPy for arrays
@@ -30,7 +31,7 @@ from h5py import h5s
 from h5py import h5p, h5fd
 
 dxpl = h5p.create(h5p.DATASET_XFER)
-dxpl.set_dxpl_mpio(h5fd.MPIO_COLLECTIVE)
+dxpl.set_dxpl_mpio(h5fd.MPIO_INDEPENDENT)
 
 
 def task(rk, l):
@@ -133,21 +134,25 @@ if rank == 0:
 
     #Fit to memory
     MEM = psutil.phymem_usage().available / NPROCS_LOCAL
-    MEM = 500 * 10 ** 6
-    tt = np.arange(1, dtype=np.float32)
+    MEM = 500 * 10 ** 3
+    tt = np.arange(1, dtype=np.float)
     ts = (sys.getsizeof(tt) + sys.getsizeof(tt[0]) * N) / 8  # Python give bits
     ts *= 8  # Allocate memory for e, tE, and ...
     MEM -= ts  # ----
     tl = MEM // ts  # Allocate memory for tS, tA, tR....
-    if tl >= l:
-        tl = l
-    else:
+    if tl < l:
         P.disk = True
-        while l % tl > 0:
-            tl -= 1
+        try:
+            cache = int(sys.argv[1])
+            print sys.argv[1]
+            assert cache < l
+        except:
+            cache = 1
+            print 'Wrong cache settings, set cache to 1'
+
+        print 'Cache size is %d of %d' % (cache, l)
     P.l = l
-    P.ll = tl
-    print 'Cache size is %d of %d' % (tl, l)
+    P.ll = cache
 
 P = comm.bcast(P)
 
@@ -348,14 +353,14 @@ if K > 0:
     C = np.zeros((N,), dtype=np.int8)
     tC = np.zeros((l,), dtype=np.int8)
 
-    for i in xrange(tb, te):
+    for i in xrange(ll):
         if disk is True:
             Ss.select_hyperslab((i, 0), (1, N))
             S.id.read(ms_l, Ss, tSl)
         else:
             tSl = tS[i - tb]
 
-        tC[i - tb] = bn.nanargmax(tSl[I])
+        tC[i] = bn.nanargmax(tSl[I])
 
     comm.Gather([tC, MPI.INT], [C, MPI.INT])
 
@@ -390,14 +395,14 @@ if K > 0:
     I.sort()
     comm.Bcast([I, MPI.INT])
 
-    for i in xrange(tb, te):
+    for i in xrange(ll):
         if disk is True:
             Ss.select_hyperslab((i, 0), (1, N))
             S.id.read(ms_l, Ss, tSl)
         else:
-            tSl = tS[i - tb]
+            tSl = tS[i]
 
-        tC[i - tb] = bn.nanargmax(tSl[I])
+        tC[i] = bn.nanargmax(tSl[I])
 
     comm.Gather([tC, MPI.INT], [C, MPI.INT])
 
