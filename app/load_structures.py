@@ -90,11 +90,17 @@ S = Sf.create_dataset(
     dtype=np.float,
     chunks=(1, na, nc))
 Ss = S.id.get_space()
+tS = np.ndarray((l, na, nc), dtype=np.float32)
+ms = h5s.create_simple((l, na, nc))
+for i in xrange(tb, te):
+    try:
+        print 'Parsing %s' % pdb_list[i]
+        tS[i - tb] = parse(pdb_list[i])
+        print 'Parsed %s' % pdb_list[i]
+    except:
+        raise ValueError('Broken structure %s' % pdb_list[i])
 
-ms = h5s.create_simple((te - tb, na, nc))
-
-tS = np.array([parse(pdb_list[i]) for i in xrange(tb, te)])
-Ss.select_hyperslab((tb, 0, 0), (te - tb, na, nc))
+Ss.select_hyperslab((tb, 0, 0), (l, na, nc))
 S.id.write(ms, Ss, tS)
 
 #Wait for all processes
