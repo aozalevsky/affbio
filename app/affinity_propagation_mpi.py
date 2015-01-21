@@ -134,7 +134,7 @@ if rank == 0:
 
     #Fit to memory
     MEM = psutil.phymem_usage().free / NPROCS_LOCAL
-    MEM = 500 * 10 ** 6
+#    MEM = 500 * 10 ** 6
     print MEM
     tt = np.arange(1, dtype=np.float)
     ts = (sys.getsizeof(tt) + sys.getsizeof(tt[0]) * N) / 8.0  # Python give bits
