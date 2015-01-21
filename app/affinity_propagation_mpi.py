@@ -68,7 +68,7 @@ params = {
 P = Bunch(params)
 
 debug = False
-debug = True
+#debug = True
 
 if rank == 0:
     print 'Clusterizing matrix'
@@ -134,12 +134,13 @@ if rank == 0:
 
     #Fit to memory
     MEM = psutil.phymem_usage().available / NPROCS_LOCAL
-    MEM = 500 * 10 ** 3
+#    MEM = 500 * 10 ** 3
     tt = np.arange(1, dtype=np.float)
     ts = (sys.getsizeof(tt) + sys.getsizeof(tt[0]) * N) / 8  # Python give bits
     ts *= 8  # Allocate memory for e, tE, and ...
     MEM -= ts  # ----
     tl = MEM // ts  # Allocate memory for tS, tA, tR....
+    cache = l
     if tl < l:
         P.disk = True
         try:
@@ -151,6 +152,7 @@ if rank == 0:
             print 'Wrong cache settings, set cache to 1'
 
         print 'Cache size is %d of %d' % (cache, l)
+
     P.l = l
     P.ll = cache
 
@@ -358,7 +360,7 @@ if K > 0:
             Ss.select_hyperslab((i, 0), (1, N))
             S.id.read(ms_l, Ss, tSl)
         else:
-            tSl = tS[i - tb]
+            tSl = tS[i]
 
         tC[i] = bn.nanargmax(tSl[I])
 
@@ -372,25 +374,27 @@ if K > 0:
     for k in xrange(K):
         ii = np.where(C == k)[0]
         tN = ii.shape[0]
+        if tN > 0:
+            tI = np.zeros((tN, ), dtype=np.float32)
+            ttI = np.zeros((tN, ), dtype=np.float32)
+            tttI = np.zeros((tN, ), dtype=np.float32)
+            ms_k = h5s.create_simple((tN,))
 
-        tI = np.zeros((tN, ), dtype=np.float32)
-        ttI = np.zeros((tN, ), dtype=np.float32)
-        tttI = np.zeros((tN, ), dtype=np.float32)
-        ms_k = h5s.create_simple((tN,))
+            j = rank
+            while j < tN:
+                ind = [(ii[i], ii[j]) for i in xrange(tN)]
+                SSs.select_elements(ind)
+                SS.id.read(ms_k, SSs, tttI)
 
-        j = rank
-        while j < tN:
-            ind = [(ii[i], ii[j]) for i in xrange(tN)]
-            SSs.select_elements(ind)
-            SS.id.read(ms_k, SSs, tttI)
+                ttI[j] = bn.nansum(tttI)
+                j += NPROCS
 
-            ttI[j] = bn.nansum(tttI)
-            j += NPROCS
+            comm.Reduce([ttI, MPI.FLOAT], [tI, MPI.FLOAT])
 
-        comm.Reduce([ttI, MPI.FLOAT], [tI, MPI.FLOAT])
-
-        if rank == 0:
-            I[k] = ii[bn.nanargmax(tI)]
+            if rank == 0:
+                I[k] = ii[bn.nanargmax(tI)]
+        else:
+            I[k] = ii[0]
 
     I.sort()
     comm.Bcast([I, MPI.INT])
