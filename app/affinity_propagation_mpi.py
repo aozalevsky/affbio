@@ -70,6 +70,12 @@ P = Bunch(params)
 debug = False
 #debug = True
 
+verbose = False
+verbose = True
+
+ft = np.float32
+
+
 if rank == 0:
     print 'Clusterizing matrix'
     t0 = time.time()
@@ -133,13 +139,13 @@ if rank == 0:
     P.N = N
 
     #Fit to memory
-    MEM = psutil.phymem_usage().free / NPROCS_LOCAL
+    MEM = psutil.phymem_usage().available / NPROCS_LOCAL
 #    MEM = 500 * 10 ** 6
-    print MEM
-    tt = np.arange(1, dtype=np.float)
-    ts = (sys.getsizeof(tt) + sys.getsizeof(tt[0]) * N) / 8.0  # Python give bits
-    ts *= 8  # Allocate memory for e, tE, and ...
-    print ts
+    print "Available memory per process: %.2fG" % (MEM / 10.0 ** 9)
+    tt = np.arange(1, dtype=ft)
+    ts = np.dtype(ft).itemsize * N  # Python give bits
+    ts *= 8 * 1.1 # Allocate memory for e, tE, and ...
+    print "Memory per row: %.2fM" % (ts / 10.0 ** 6)
 #    MEM -= ts  # ----
     tl = int(MEM // ts)  # Allocate memory for tS, tA, tR....
 
@@ -158,12 +164,14 @@ if rank == 0:
             cache = tl
             #print 'Wrong cache settings, set cache to %d' % tl
         tl = adjust_cache(tl, l)
-        print 'Cache size is %d of %d' % (tl, l)
         P.l = l
         P.ll = tl
     else:
         P.l = l
         P.ll = l
+
+    print 'Cache size is %d of %d' % (P.ll, P.l)
+    print "Estimated memory per process: %.2fG" % (ts * P.ll / 10.0 ** 9)
 
 P = comm.bcast(P)
 
@@ -178,9 +186,9 @@ ms_e = h5s.create_simple((1,))
 
 tb, te = task(rank, l)
 
-tS = np.ndarray((ll, N), dtype=np.float32)
-tSl = np.ndarray((N,), dtype=np.float32)
-tdS = np.ndarray((1,), dtype=np.float32)
+tS = np.ndarray((ll, N), dtype=ft)
+tSl = np.ndarray((N,), dtype=ft)
+tdS = np.ndarray((1,), dtype=ft)
 
 disk = P.disk
 
@@ -188,16 +196,16 @@ if disk is True:
 
     TMLf = h5py.File(P.TMfn + '_' + str(rank) + '.hdf5', 'w')
 
-    S = TMLf.create_dataset('S', (l, N), dtype=np.float32)
+    S = TMLf.create_dataset('S', (l, N), dtype=ft)
     Ss = S.id.get_space()
 
 #Copy input data and
 #place preference on diagonal
 preference = P.preference
 random_state = np.random.RandomState(0)
-x = np.finfo(np.double).eps
-y = np.finfo(np.double).tiny * 100
-z = - np.finfo(np.double).max
+x = np.finfo(ft).eps
+y = np.finfo(ft).tiny * 100
+z = - np.finfo(ft).max
 
 for i in xrange(tb, te, ll):
     SSs.select_hyperslab((i, 0), (ll, N))
@@ -210,30 +218,30 @@ for i in xrange(tb, te, ll):
         S.id.write(ms, Ss, tS)
 
 if disk is True:
-    R = TMLf.create_dataset('R', (l, N), dtype=np.float32)
+    R = TMLf.create_dataset('R', (l, N), dtype=ft)
     Rs = R.id.get_space()
 
-tRold = np.zeros((ll, N), dtype=np.float32)
-tR = np.zeros((ll, N), dtype=np.float32)
-tdR = np.zeros((l,), dtype=np.float32)
+tRold = np.zeros((ll, N), dtype=ft)
+tR = np.zeros((ll, N), dtype=ft)
+tdR = np.zeros((l,), dtype=ft)
 
 #Shared storage
 TMf = h5py.File(P.TMfn + '.hdf5', 'w', driver='mpio', comm=comm)
 TMf.atomic = True
 
-Rp = TMf.create_dataset('Rp', (N, N), dtype=np.float32)
+Rp = TMf.create_dataset('Rp', (N, N), dtype=ft)
 Rps = Rp.id.get_space()
 
-tRp = np.ndarray((ll, N), dtype=np.float32)
-tRpa = np.ndarray((N, ll), dtype=np.float32)
+tRp = np.ndarray((ll, N), dtype=ft)
+tRpa = np.ndarray((N, ll), dtype=ft)
 
-A = TMf.create_dataset('A', (N, N), dtype=np.float32)
+A = TMf.create_dataset('A', (N, N), dtype=ft)
 As = A.id.get_space()
 
-tAS = np.ndarray((ll, N), dtype=np.float32)
-tAold = np.ndarray((N, ll), dtype=np.float32)
-tA = np.ndarray((N, ll), dtype=np.float32)
-tdA = np.ndarray((l,), dtype=np.float32)
+tAS = np.ndarray((ll, N), dtype=ft)
+tAold = np.ndarray((N, ll), dtype=ft)
+tA = np.ndarray((N, ll), dtype=ft)
+tdA = np.ndarray((l,), dtype=ft)
 
 conv_iter = P.conv_iter
 e = np.ndarray((N, conv_iter), dtype=np.int8)
@@ -248,7 +256,7 @@ ind = np.arange(ll)
 
 for it in xrange(max_iter):
     if rank == 0:
-        if debug is True:
+        if verbose is True:
             print '=' * 10 + 'It %d' % (it) + '=' * 10
             tit = time.time()
     # Compute responsibilities
@@ -293,7 +301,7 @@ for it in xrange(max_iter):
 
             #Rp[i, :] = tRp
     if rank == 0:
-        if debug is True:
+        if verbose is True:
             teit1 = time.time()
             print 'R T %s' % (teit1 - tit)
 
@@ -328,7 +336,7 @@ for it in xrange(max_iter):
         A.id.write(ms, As, tA, dxpl=dxpl)
 
     if rank == 0:
-        if debug is True:
+        if verbose is True:
             teit2 = time.time()
             print 'A T %s' % (teit2 - teit1)
 
@@ -340,7 +348,7 @@ for it in xrange(max_iter):
     K = bn.nansum(tE)
 
     if rank == 0:
-        if debug is True:
+        if verbose is True:
             teit = time.time()
             print 'Total K %d T %s' % (K, teit - tit)
 
@@ -365,8 +373,8 @@ for it in xrange(max_iter):
 if K > 0:
 
     I = np.nonzero(e[:, 0])[0]
-    C = np.zeros((N,), dtype=np.int8)
-    tC = np.zeros((l,), dtype=np.int8)
+    C = np.zeros((N,), dtype=np.int)
+    tC = np.zeros((l,), dtype=np.int)
 
     for i in xrange(l):
         if disk is True:
