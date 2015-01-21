@@ -68,7 +68,7 @@ params = {
 P = Bunch(params)
 
 debug = False
-debug = True
+#debug = True
 
 if rank == 0:
     print 'Clusterizing matrix'
@@ -133,13 +133,21 @@ if rank == 0:
     P.N = N
 
     #Fit to memory
-    MEM = psutil.phymem_usage().available / NPROCS_LOCAL
-    MEM = 500 * 10 ** 3
+    MEM = psutil.phymem_usage().free / NPROCS_LOCAL
+    MEM = 500 * 10 ** 6
+    print MEM
     tt = np.arange(1, dtype=np.float)
-    ts = (sys.getsizeof(tt) + sys.getsizeof(tt[0]) * N) / 8  # Python give bits
+    ts = (sys.getsizeof(tt) + sys.getsizeof(tt[0]) * N) / 8.0  # Python give bits
     ts *= 8  # Allocate memory for e, tE, and ...
-    MEM -= ts  # ----
-    tl = MEM // ts  # Allocate memory for tS, tA, tR....
+    print ts
+#    MEM -= ts  # ----
+    tl = int(MEM // ts)  # Allocate memory for tS, tA, tR....
+
+    def adjust_cache(tl, l):
+        while float(l) % float(tl) > 0:
+            tl -= 1
+        return tl
+
     if tl < l:
         P.disk = True
         try:
@@ -147,12 +155,15 @@ if rank == 0:
             print sys.argv[1]
             assert cache < l
         except:
-            cache = 1
-            print 'Wrong cache settings, set cache to 1'
-
-        print 'Cache size is %d of %d' % (cache, l)
-    P.l = l
-    P.ll = cache
+            cache = tl
+            #print 'Wrong cache settings, set cache to %d' % tl
+        tl = adjust_cache(tl, l)
+        print 'Cache size is %d of %d' % (tl, l)
+        P.l = l
+        P.ll = tl
+    else:
+        P.l = l
+        P.ll = l
 
 P = comm.bcast(P)
 
@@ -177,7 +188,7 @@ if disk is True:
 
     TMLf = h5py.File(P.TMfn + '_' + str(rank) + '.hdf5', 'w')
 
-    S = TMLf.create_dataset('S', (l, N), dtype='f4')
+    S = TMLf.create_dataset('S', (l, N), dtype=np.float32)
     Ss = S.id.get_space()
 
 #Copy input data and
@@ -199,7 +210,7 @@ for i in xrange(tb, te, ll):
         S.id.write(ms, Ss, tS)
 
 if disk is True:
-    R = TMLf.create_dataset('R', (l, N), dtype='f4')
+    R = TMLf.create_dataset('R', (l, N), dtype=np.float32)
     Rs = R.id.get_space()
 
 tRold = np.zeros((ll, N), dtype=np.float32)
@@ -210,13 +221,13 @@ tdR = np.zeros((l,), dtype=np.float32)
 TMf = h5py.File(P.TMfn + '.hdf5', 'w', driver='mpio', comm=comm)
 TMf.atomic = True
 
-Rp = TMf.create_dataset('Rp', (N, N), dtype='f4')
+Rp = TMf.create_dataset('Rp', (N, N), dtype=np.float32)
 Rps = Rp.id.get_space()
 
 tRp = np.ndarray((ll, N), dtype=np.float32)
 tRpa = np.ndarray((N, ll), dtype=np.float32)
 
-A = TMf.create_dataset('A', (N, N), dtype='f4')
+A = TMf.create_dataset('A', (N, N), dtype=np.float32)
 As = A.id.get_space()
 
 tAS = np.ndarray((ll, N), dtype=np.float32)
@@ -237,8 +248,9 @@ ind = np.arange(ll)
 
 for it in xrange(max_iter):
     if rank == 0:
-        print '=' * 10 + 'It %d' % (it) + '=' * 10
-        tit = time.time()
+        if debug is True:
+            print '=' * 10 + 'It %d' % (it) + '=' * 10
+            tit = time.time()
     # Compute responsibilities
     for i in xrange(tb, te, ll):
         if disk is True:
@@ -281,8 +293,9 @@ for it in xrange(max_iter):
 
             #Rp[i, :] = tRp
     if rank == 0:
-        teit1 = time.time()
-        print 'R T %s' % (teit1 - tit)
+        if debug is True:
+            teit1 = time.time()
+            print 'R T %s' % (teit1 - tit)
 
     comm.Barrier()
 
@@ -315,8 +328,9 @@ for it in xrange(max_iter):
         A.id.write(ms, As, tA, dxpl=dxpl)
 
     if rank == 0:
-        teit2 = time.time()
-        print 'A T %s' % (teit2 - teit1)
+        if debug is True:
+            teit2 = time.time()
+            print 'A T %s' % (teit2 - teit1)
 
     ttE = np.array(((tdA + tdR) > 0), dtype=np.int8)
 
@@ -326,8 +340,9 @@ for it in xrange(max_iter):
     K = bn.nansum(tE)
 
     if rank == 0:
-        teit = time.time()
-        print 'Total K %d T %s' % (K, teit - tit)
+        if debug is True:
+            teit = time.time()
+            print 'Total K %d T %s' % (K, teit - tit)
 
     if it >= conv_iter:
 
@@ -353,12 +368,12 @@ if K > 0:
     C = np.zeros((N,), dtype=np.int8)
     tC = np.zeros((l,), dtype=np.int8)
 
-    for i in xrange(ll):
+    for i in xrange(l):
         if disk is True:
             Ss.select_hyperslab((i, 0), (1, N))
             S.id.read(ms_l, Ss, tSl)
         else:
-            tSl = tS[i - tb]
+            tSl = tS[i]
 
         tC[i] = bn.nanargmax(tSl[I])
 
@@ -373,9 +388,9 @@ if K > 0:
         ii = np.where(C == k)[0]
         tN = ii.shape[0]
 
-        tI = np.zeros((tN, ), dtype=np.float32)
-        ttI = np.zeros((tN, ), dtype=np.float32)
-        tttI = np.zeros((tN, ), dtype=np.float32)
+        tI = np.zeros((tN, ), dtype=np.float)
+        ttI = np.zeros((tN, ), dtype=np.float)
+        tttI = np.zeros((tN, ), dtype=np.float)
         ms_k = h5s.create_simple((tN,))
 
         j = rank
@@ -395,7 +410,7 @@ if K > 0:
     I.sort()
     comm.Bcast([I, MPI.INT])
 
-    for i in xrange(ll):
+    for i in xrange(l):
         if disk is True:
             Ss.select_hyperslab((i, 0), (1, N))
             S.id.read(ms_l, Ss, tSl)
@@ -425,10 +440,13 @@ if disk is True:
 if rank == 0:
     os.remove(P.TMfn + '.hdf5')
     t1 = time.time()
-    print I[:], C[:]
+    print 'Preference: %f' % preference
+    print 'APN: %d' % K
+    print "APN time is %s" % (t1 - t0)
+    print I[:]
+#    print C[:]
     I.dump('aff.centers')
     C.dump('aff.labels')
-    print "APM time is %s" % (t1 - t0)
 
     if debug is True:
         pr.disable()
@@ -437,3 +455,15 @@ if rank == 0:
         ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
         ps.print_stats()
         print s.getvalue()
+        def check_result(I):
+            """
+            >>> print I
+            [  50  128  136  185  198  201  418  460  463  473  474  537  539  594  597
+              619  627  635  673  695  730  752  800  828  864  871  873  874 1042 1046
+             1051 1116 1138 1142 1150 1154 1158 1205 1209 1212 1215 1222 1225 1238 1255
+             1259 1270 1280 1281 1282 1291 1311 1312 1314]
+            """
+            print I
+            return
+        import doctest
+        doctest.testmod(verbose=True)

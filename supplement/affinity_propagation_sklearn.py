@@ -28,7 +28,9 @@ af = apn(
 cluster_centers_indices = af.cluster_centers_indices_
 labels = af.labels_
 n_clusters_ = len(cluster_centers_indices)
+print "Preference: %f" % af.get_params()['preference']
 print 'APN: %d' % n_clusters_
 t1 = dt.datetime.now()
-print cluster_centers_indices, labels
 print "APN time is %s" % (t1 - t0)
+print cluster_centers_indices
+#print labels
