@@ -144,7 +144,7 @@ if rank == 0:
     print "Available memory per process: %.2fG" % (MEM / 10.0 ** 9)
     tt = np.arange(1, dtype=ft)
     ts = np.dtype(ft).itemsize * N  # Python give bits
-    ts *= 8 * 1.1 # Allocate memory for e, tE, and ...
+    ts *= 8 * 1.1  # Allocate memory for e, tE, and ...
     print "Memory per row: %.2fM" % (ts / 10.0 ** 6)
 #    MEM -= ts  # ----
     tl = int(MEM // ts)  # Allocate memory for tS, tA, tR....
@@ -273,7 +273,7 @@ for it in xrange(max_iter):
 
         As.select_hyperslab((i, 0), (ll, N))
         A.id.read(ms, As, tAS)
-        #tAS = A[i, :]
+        #Tas = a[I, :]
         tAS += tS
         #tRold = R[i, :]
 
@@ -311,8 +311,11 @@ for it in xrange(max_iter):
     for j in xrange(tb, te, ll):
 
         As.select_hyperslab((0, j), (N, ll))
-        A.id.read(ms, As, tAold, dxpl=dxpl)
-        #tAold = A[:, j]
+
+        if disk is True:
+            A.id.read(ms, As, tAold, dxpl=dxpl)
+        else:
+            tAold = tA.copy()
 
         Rps.select_hyperslab((0, j), (N, ll))
         Rp.id.read(ms, Rps, tRpa, dxpl=dxpl)
@@ -463,6 +466,7 @@ if rank == 0:
         ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
         ps.print_stats()
         print s.getvalue()
+
         def check_result(I):
             """
             >>> print I
@@ -473,5 +477,6 @@ if rank == 0:
             """
             print I
             return
+
         import doctest
         doctest.testmod(verbose=True)
