@@ -47,7 +47,7 @@ def task(rk, ln):
 
 def calc_diag_chunk(ic, tS):
     calculator = pyRMSD.RMSDCalculator.RMSDCalculator(
-        "QCP_OMP_CALCULATOR",
+        "KABSCH_SERIAL_CALCULATOR",
         ic)
     rmsd = calculator.pairwiseRMSDMatrix()
     rmsd_matrix = condensedMatrix.CondensedMatrix(rmsd)
@@ -64,7 +64,7 @@ def calc_chunk(ic, jc, tS):
     for i in xrange(ln):
         ttS[0] = ic[i]
         calculator = pyRMSD.RMSDCalculator.RMSDCalculator(
-            "QCP_OMP_CALCULATOR",
+            "KABSCH_SERIAL_CALCULATOR",
             ttS)
         tS[i] = calculator.oneVsFollowing(0)
 
