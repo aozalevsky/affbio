@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/bin/env python
 
 #General modules
 import time
@@ -6,7 +6,10 @@ import os
 import sys
 import psutil
 import gc
-
+import uuid
+import tempfile
+import shutil
+from os.path import join as osp
 
 gc.disable()
 
@@ -129,7 +132,7 @@ if rank == 0:
 
     #tmpd = osp.join(osp.abspath(osp.dirname(s.file.filename)), 'tmp.hdf5')
     #P.TMfn = pj('/tmp', 'tmp.hdf5')
-    P.TMfn = 'aff_tmp'
+    P.TMfn = str(uuid.uuid1())
 
     r = N % NPROCS
     N -= r
@@ -193,8 +196,9 @@ tdS = np.ndarray((1,), dtype=ft)
 disk = P.disk
 
 if disk is True:
-
-    TMLf = h5py.File(P.TMfn + '_' + str(rank) + '.hdf5', 'w')
+    TMLfd = tempfile.mkdtemp()
+    TMLfn = osp(TMLfd, P.TMfn + '_' + str(rank) + '.hdf5')
+    TMLf = h5py.File(P.TMLfn, 'w')
 
     S = TMLf.create_dataset('S', (l, N), dtype=ft)
     Ss = S.id.get_space()
@@ -446,7 +450,7 @@ SSf.close()
 TMf.close()
 if disk is True:
     TMLf.close()
-    os.remove(P.TMfn + '_' + str(rank) + '.hdf5')
+    shutil.rmtree(TMLfd)
 
 if rank == 0:
     os.remove(P.TMfn + '.hdf5')
