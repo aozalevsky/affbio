@@ -1,4 +1,4 @@
-#!/bin/env python
+#!/usr/bin/env python
 
 #General modules
 import time
