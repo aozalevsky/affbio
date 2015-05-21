@@ -7,78 +7,40 @@ import time
 #NumPy for arrays
 import numpy as np
 
-#MPI parallelism
-from mpi4py import MPI
-#Get MPI info
-comm = MPI.COMM_WORLD
-#Get number of processes
-NPROCS = comm.size
-#Get rank
-rank = comm.rank
-
-#Multiprocessing parallellism
-import multiprocessing
-#import joblib
-NCORES = multiprocessing.cpu_count()
-
 #H5PY for storage
 import h5py
 from h5py import h5s
 
-#pyRMSD for calculations
-import prody
-
-
-def task(rk, ln):
-    b = rk * ln
-    return (b, b + ln)
-
-
-def parse(i):
-    """Parse PDB files"""
-    ps = prody.parsePDB(i)
-    pc = ps.getCoords()
-    return pc
+#XDR for xtc
+from xdrfile import *
 
 debug = False
 #debug = True
 
-#Init logging
-if rank == 0:
-    #Get current time
-    t0 = time.time()
+#Get current time
+t0 = time.time()
 
-    if debug is True:
-        import cProfile
-        import pstats
-        import StringIO
-        pr = cProfile.Profile()
-        pr.enable()
+if debug is True:
+    import cProfile
+    import pstats
+    import StringIO
+    pr = cProfile.Profile()
+    pr.enable()
 
 
-pdb_list = sys.argv[1:]
+xtc = sys.argv[1]
 N = len(pdb_list)
 
-if NPROCS > 1:
-    #r = N % (NPROCS * NCORES)
-    r = N % (NPROCS * 4)
-else:
-    r = 0
-
-if r > 0:
-#    r = (NPROCS * NCORES) - r
-#    r = NPROCS - r
-    N = N - r
-    r = 0
-    if rank == 0:
-        print 'Truncating number to %d to fit %s procs' % (N, NPROCS)
-
+r = N % (NPROCS * NCORES)
+if r != 0:
+    r = (NPROCS * NCORES) - r
+    N = N + r
 l = N / NPROCS
 
 tb, te = task(NPROCS - 1 - rank, l)
 
-#if rank == 0:
-#    te = te - r
+if rank == 0:
+    te = te - r
 
 na = 0  # Number of atoms
 nc = 3  # Number of atom coordinates
@@ -133,7 +95,7 @@ if rank == 0:
         rd = np.random.randint(N - r)
         S[te + i] = S[rd]
         pdb_list.append('dummy%d_%s' % (i, pdb_list[rd]))
-    L[:] = pdb_list[:N]
+    L[:] = pdb_list[:]
 
     print "Structure reading time is %f" % (time.time() - t0)
 
@@ -146,3 +108,7 @@ if rank == 0:
         print s.getvalue()
 
     Sf.close()
+
+
+
+

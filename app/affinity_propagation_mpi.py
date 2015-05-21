@@ -256,6 +256,8 @@ damping = P.damping
 max_iter = P.max_iter
 
 converged = False
+cK = 0
+K = 0
 ind = np.arange(ll)
 
 for it in xrange(max_iter):
@@ -349,15 +351,28 @@ for it in xrange(max_iter):
 
     ttE = np.array(((tdA + tdR) > 0), dtype=np.int8)
 
-    comm.Gather([ttE, MPI.INT], [tE, MPI.INT])
-    comm.Bcast([tE, MPI.INT])
+    if NPROCS > 1:
+        comm.Gather([ttE, MPI.INT], [tE, MPI.INT])
+        comm.Bcast([tE, MPI.INT])
+    else:
+        tE = ttE
     e[:, it % conv_iter] = tE
+    pK = K
     K = bn.nansum(tE)
 
     if rank == 0:
         if verbose is True:
             teit = time.time()
-            print 'Total K %d T %s' % (K, teit - tit)
+            cc = ''
+            if K == pK:
+                if cK == 0:
+                    cK += 1
+                elif cK > 1:
+                    cc = ' Conv %d of %d' % (cK, conv_iter)
+            else:
+                cK = 0
+
+            print 'Total K %d T %s%s' % (K, teit - tit, cc)
 
     if it >= conv_iter:
 

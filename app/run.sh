@@ -12,3 +12,6 @@ mpirun -n ${1} /home/domain/silwer/work/aff_cluster/app/prepare_cluster_matrix.p
 /home/domain/silwer/work/aff_cluster/app/calculate_median.py
 #Cluster matrix
 mpirun -n ${1} /home/domain/silwer/work/aff_cluster/app/affinity_propagation_mpi.py
+
+#print centers
+/home/domain/silwer/work/aff_cluster/app/get_stat.py
