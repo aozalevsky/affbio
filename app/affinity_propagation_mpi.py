@@ -142,7 +142,7 @@ if rank == 0:
     P.N = N
 
     #Fit to memory
-    MEM = psutil.phymem_usage().available / NPROCS_LOCAL
+    MEM = psutil.virtual_memory().available / NPROCS_LOCAL
 #    MEM = 500 * 10 ** 6
     print "Available memory per process: %.2fG" % (MEM / 10.0 ** 9)
     tt = np.arange(1, dtype=ft)
@@ -198,7 +198,7 @@ disk = P.disk
 if disk is True:
     TMLfd = tempfile.mkdtemp()
     TMLfn = osp(TMLfd, P.TMfn + '_' + str(rank) + '.hdf5')
-    TMLf = h5py.File(P.TMLfn, 'w')
+    TMLf = h5py.File(TMLfn, 'w')
 
     S = TMLf.create_dataset('S', (l, N), dtype=ft)
     Ss = S.id.get_space()
