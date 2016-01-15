@@ -525,10 +525,10 @@ def calculate_preference(
     tCM = np.zeros((N,), dtype=np.float)
     ms = h5s.create_simple((N,))
 
-    for i in xrange(N):
-        CMs.select_hyperslab((i, 0), (1, N))
-        CM.id.read(ms, CMs, tCM)
-        med.add(tCM)
+    for i in range(1, N):
+        #CMs.select_hyperslab((i, 0), (1, i - 1))
+        #CM.id.read(ms, CMs, tCM)
+        med.add(CM[i, :i - 1])
 
     #level, median = med.quantiles()[0]
     median = med.quantile()
@@ -1205,7 +1205,6 @@ if __name__ == '__main__':
         render = parser.add_argument_group('render')
 
         render.add_argument('-o', '--output',
-                            required=True,
                             metavar='output.png',
                             help='Output PNG image')
 
