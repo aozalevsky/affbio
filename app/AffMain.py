@@ -38,7 +38,31 @@ from AffRender import AffRender
 import argparse as ag
 
 
-#@master
+def dummy(*args, **kwargs):
+    pass
+
+
+def init_mpi():
+    #Get MPI info
+    comm = MPI.COMM_WORLD
+    #Get number of processes
+    NPROCS = comm.size
+    #Get rank
+    rank = comm.rank
+
+    return (comm, NPROCS, rank)
+
+
+def master(fn):
+    comm, NPROCS, rank = init_mpi()
+
+    if rank == 0:
+        return fn
+    else:
+        return dummy
+
+
+@master
 def get_args(choices):
     """Parse cli arguments"""
 
@@ -168,29 +192,6 @@ class Bunch(object):
         self.__dict__.update(adict)
 
 
-def master(fn):
-    #comm, NPROCS, rank = init_mpi()
-
-    def dummy(*args, **kwargs):
-        pass
-
-    if rank == 0:
-        return fn
-    else:
-        return dummy
-
-
-def init_mpi():
-    #Get MPI info
-    comm = MPI.COMM_WORLD
-    #Get number of processes
-    NPROCS = comm.size
-    #Get rank
-    rank = comm.rank
-
-    return (comm, NPROCS, rank)
-
-
 def task(N, NPROCS, rank):
     l = N / NPROCS
     b = rank * l
@@ -232,14 +233,14 @@ def load_pdb_coords(
         check_pbc(pc)
         return pc
 
-#    @master
+    @master
     def estimate_pdb_numatoms(topology):
 
         pdb_t = parse_pdb(topology)
 
         return pdb_t.shape
 
-#    @master
+    @master
     def estimate_coord_shape(
             ftype='pdb',
             pdb_list=None,
@@ -262,7 +263,7 @@ def load_pdb_coords(
 
         return shape
 
-#    @master
+    @master
     def load_pdb_names(Sfn, pdb_list, topology=None):
         N = len(pdb_list)
 
@@ -567,7 +568,7 @@ def prepare_cluster_matrix(
     RMf.close()
 
 
-#@master
+@master
 def calc_median(
         Sfn,
         mpi=None,
@@ -621,7 +622,7 @@ def calc_median(
     CMf.close()
 
 
-#@master
+@master
 def set_preference(
         Sfn,
         preference=None,
@@ -1113,7 +1114,7 @@ def aff_cluster(
             Sf.close()
 
 
-#@master
+@master
 def print_stat(
         Sfn,
         mpi=None,
@@ -1151,7 +1152,7 @@ def print_stat(
             f.write("%d\t%s\t%d\t%.3f\n" % (i, L[C[i]], cs[i], pcs[i]))
 
 
-#@master
+@master
 def render_b_factor(
         Sfn,
         mpi=None,
@@ -1239,7 +1240,7 @@ def render_b_factor(
 #            f.write("%d\t%s\t%d\t%.3f\n" % (i, L[C[i]], cs[i], pcs[i]))
 
 
-#@master
+@master
 def render_aff(*args, **kwargs):
 
     AffRender(*args, **kwargs)
@@ -1321,9 +1322,6 @@ def run_task(task, args):
     comm.Barrier()
 
 
-def dummy(*args, **kwargs):
-    pass
-
 if __name__ == '__main__':
 
     mpi = init_mpi()
@@ -1337,7 +1335,7 @@ if __name__ == '__main__':
         try:
             args = get_args(get_tasks_wrapper())
         except SystemExit:
-            comm.abort()
+            comm.Abort()
 
     args = comm.bcast(args)
 
