@@ -4,9 +4,12 @@ from sklearn.cluster import AffinityPropagation as apn
 import datetime as dt
 
 import h5py
+import sys
+
+
 #Init storage for matrices
-pdb = 'aff.list'
-matf = 'aff_cluster_matrix.hdf5'
+#pdb = 'aff.list'
+matf = sys.argv[1]
 #HDF5 file
 f = h5py.File(matf, 'r')
 #Table for RMSD
@@ -23,7 +26,7 @@ af = apn(
     convergence_iter=15,
     max_iter=2000,
     preference=pref,
-    damping=0.9).fit(cl_matrix)
+    damping=0.95).fit(cl_matrix)
 
 cluster_centers_indices = af.cluster_centers_indices_
 labels = af.labels_

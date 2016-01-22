@@ -10,6 +10,7 @@ import shutil
 import psutil
 import tempfile
 import subprocess
+import glob
 from os.path import join as osp
 from collections import OrderedDict as OD
 
@@ -93,10 +94,15 @@ def load_pdb_coords(
         verbose=False,
         *args, **kwargs):
 
+    def check_pbc(coords, threshold=50):
+        for i in range(len(coords) - 1):
+            assert np.linalg.norm(coords[i] - coords[i + 1]) < threshold
+
     def parse_pdb(i):
         """Parse PDB files"""
         ps = prody.parsePDB(i)
         pc = ps.getCoords()
+        check_pbc(pc)
         return pc
 
     @master
@@ -152,6 +158,11 @@ def load_pdb_coords(
 
     comm, NPROCS, rank = mpi
 
+    if len(pdb_list) == 1:
+        ptrn = pdb_list[0]
+        if '*' in ptrn or '?' in ptrn:
+            pdb_list = glob.glob(ptrn)
+
     shape = estimate_coord_shape(pdb_list=pdb_list, topology=topology)
     shape = comm.bcast(shape)
     N = shape[0]
@@ -170,14 +181,14 @@ def load_pdb_coords(
 
     # A little bit of dark magic for faster io
     Ss = S.id.get_space()
-    tS = np.ndarray(chunk, dtype=np.float32)
+    tS = np.ndarray(chunk, dtype=np.float)
     ms = h5s.create_simple(chunk)
 
     tb, te = task(N, NPROCS, rank)
 
     for i in range(tb, te):
         try:
-            tS[:] = parse_pdb(pdb_list[i])
+            tS = parse_pdb(pdb_list[i])
             if verbose:
                 print 'Parsed %s' % pdb_list[i]
         except:
@@ -215,7 +226,7 @@ def calc_rmsd_matrix(
         ln, n, d = ic.shape
         ttS = np.zeros((ln + 1, n, d))
         ttS[1:] = jc
-        for i in xrange(ln):
+        for i in range(ln):
             ttS[0] = ic[i]
             calculator = pyRMSD.RMSDCalculator.RMSDCalculator(
                 "KABSCH_SERIAL_CALCULATOR",
@@ -262,21 +273,20 @@ def calc_rmsd_matrix(
     RMs = RM.id.get_space()
 
     #Init calculations
-    tS = np.zeros((l, l), dtype=np.float)
+    tS = np.zeros((l, l), dtype=np.float32)
     ms = h5s.create_simple((l, l))
 
     i, j = rank, rank
     ic = S[i * l: (i + 1) * l]
     jc = ic
 
-    for c in xrange(0, m):
+    for c in range(0, m):
         if rank == 0:
             tit = time.time()
 
-        try:
-            assert i == j
+        if i == j:
             calc_diag_chunk(ic, tS)
-        except AssertionError:
+        else:
             calc_chunk(ic, jc, tS)
 
         RMs.select_hyperslab((i * l, j * l), (l, l))
@@ -286,6 +296,8 @@ def calc_rmsd_matrix(
             teit = time.time()
             if verbose:
                 print "Step %d of %d T %s" % (c, m, teit - tit)
+
+        # Dark magic of task assingment
 
         if 0 < (rank - c):
             j = j - 1
@@ -303,67 +315,6 @@ def calc_rmsd_matrix(
     #Cleanup
     #Close matrix file
     Sf.close()
-
-
-def get_tasks():
-
-    tasks = OD([
-        ('load_pdb', load_pdb_coords),
-        ('calc_rmsd', calc_rmsd_matrix),
-        ('prepare_matrix', prepare_cluster_matrix),
-        ('calc_preference', calculate_preference),
-        ('cluster', aff_cluster),
-        ('print_stat', print_stat),
-        ('render_results', render_b_factor),
-        ('all', dummy)])
-
-    return tasks
-
-
-def run_task(task, args):
-
-    mpi = init_mpi()
-
-    comm, NPROCS, rank = mpi
-
-    args = comm.bcast(args)
-
-    args['mpi'] = mpi
-
-    #Init logging
-    if rank == 0:
-        t0 = init_logging(task, args['verbose'])
-
-        if args['debug'] is True:
-
-            import cProfile
-            import pstats
-            import StringIO
-
-            pr = cProfile.Profile()
-            pr.enable()
-
-    tasks = get_tasks()
-
-    if task == 'all':
-        tasks.pop('all')
-
-        for t, fn in tasks.items():
-            fn(**args)
-    else:
-        fn = tasks[task]
-        fn(**args)
-
-    if rank == 0:
-        finish_logging(task, t0, args['verbose'])
-
-        if args['debug'] is True:
-            pr.disable()
-            s = StringIO.StringIO()
-            sortby = 'tottime'
-            ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-            ps.print_stats()
-            print s.getvalue()
 
 
 def prepare_cluster_matrix(
@@ -390,7 +341,6 @@ def prepare_cluster_matrix(
     RMf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
     #Open table with data for clusterization
     RM = RMf['rmsd']
-    RMs = RM.id.get_space()
 
     N = RM.len()
     l = N // NPROCS
@@ -409,87 +359,60 @@ def prepare_cluster_matrix(
     CM = RMf.require_dataset(
         'cluster',
         (N, N),
-        dtype=np.float,
+        dtype=np.float32,
         chunks=(l, l))
     CM.attrs['chunk'] = l
-    CMs = CM.id.get_space()
 
     random_state = np.random.RandomState(0)
-    x = np.finfo(np.float).eps
-    y = np.finfo(np.float).tiny * 100
-
-    #Partiotioning
-    lN = (NPROCS + 1) * NPROCS / 2
-
-    m = lN // NPROCS
-    mr = lN % NPROCS
-
-    if mr > 0:
-        m = m + 1 if rank % 2 == 0 else m
+    x = np.finfo(np.float32).eps
+    y = np.finfo(np.float32).tiny * 100
 
     #Init calculations
-    tRM = np.zeros((l, l), dtype=np.float)
-    tCM = np.zeros((l, l), dtype=np.float)
-    ttCM = np.zeros((l, l), dtype=np.float)
-    ms = h5s.create_simple((l, l))
+    i = rank
 
-    i, j = rank, rank
-
-    for c in xrange(m):
+    while i < N:
         if rank == 0:
             tit = time.time()
-        RMs.select_hyperslab((i * l, j * l), (l, l))
-        RM.id.read(ms, RMs, tRM)
 
-        #tRM = -1 * tRM ** 2
+        tRM = RM[i:, i]
+
         tRM **= 2
         tRM *= -1
         tCM = tRM * x + y
+        ttCM = tRM + tCM * random_state.randn(N - i)
 
-        try:
-            assert i != j
-
-            ttCM = calc_chunk(l, tRM, tCM)
-            ttCM.transpose()
-            CMs.select_hyperslab((j * l, i * l), (l, l))
-            CM.id.write(ms, CMs, ttCM)
-
-            ttCM = calc_chunk(l, tRM, tCM)
-
-        except AssertionError:
-            ttCM = calc_chunk_diag(l, tRM, tCM)
-
-        CMs.select_hyperslab((i * l, j * l), (l, l))
-        CM.id.write(ms, CMs, ttCM)
+        CM[i:, i] = ttCM[:]
+#
+        ttCM = tRM + tCM * random_state.randn(N - i)
+        CM[i, i:] = ttCM[:]
 
         if rank == 0:
             teit = time.time()
             if verbose:
-                print "Step %d of %d T %s" % (c, m, teit - tit)
+                print "Step T %s" % (teit - tit)
+#                print "Step %d of %d T %s" % (, teit - tit)
 
-        if (rank - c) > 0:
-            j = j - 1
-        elif (rank - c) == 0:
-            i = NPROCS - rank - 1
-        else:
-            j = j + 1
+        i += NPROCS
 
     #Wait for all processes
     comm.Barrier()
+
+    if rank == 0:
+#        print CM[10, 3], CM[3, 10]
+#        print sum(CM[-1])
+        print np.sum(CM)
+#        print CM[:]
 
     RMf.close()
 
 
 @master
-def calculate_preference(
+def calc_median(
         Sfn,
-        factor=1.0,
         mpi=None,
         verbose=False,
         debug=False,
         *args, **kwargs):
-
-    comm, NPROCS, rank = mpi
 
     #Livestats for median
     #from livestats import livestats
@@ -503,7 +426,6 @@ def calculate_preference(
     #CMf.atomic = True
     #Open table with data for clusterization
     CM = CMf['cluster']
-    CMs = CM.id.get_space()
 
     N = CM.len()
     l = CM.attrs['chunk']
@@ -522,31 +444,82 @@ def calculate_preference(
     #med = livestats.LiveStats()
     med = lvc.Quantile(0.5)
 
-    tCM = np.zeros((N,), dtype=np.float)
-    ms = h5s.create_simple((N,))
-
-    for i in range(1, N):
+    for i in range(N):
         #CMs.select_hyperslab((i, 0), (1, i - 1))
         #CM.id.read(ms, CMs, tCM)
-        med.add(CM[i, :i - 1])
+        med.add(CM[i, :i])
 
     #level, median = med.quantiles()[0]
     median = med.quantile()
-    preference = median * factor
+
+    median = np.median(CM)
 
     if verbose:
         print 'Median: %f' % median
-        print 'Preference: %f' % preference
+
+    if rank == 0:
+        print np.median(CM)
 
     CM.attrs['median'] = median
-    CM.attrs['preference'] = preference
 
     CMf.close()
 
 
-def aff_cluster(
+@master
+def set_preference(
         Sfn,
         preference=None,
+        factor=1.0,
+        mpi=None,
+        verbose=False,
+        debug=False,
+        *args, **kwargs):
+
+    comm, NPROCS, rank = mpi
+
+    #Init storage for matrices
+    #Get file name
+    #Open matrix file in parallel mode
+    SSf = h5py.File(Sfn, 'r+', driver='sec2')
+    #Open table with data for clusterization
+    SS = SSf['cluster']
+
+    ft = np.float32
+
+    N, N1 = SS.shape
+
+    if N != N1:
+        raise ValueError("S must be a square array \
+            (shape=%s)" % repr((N, N1)))
+
+    if not preference:
+        try:
+            preference = SS.attrs['median']
+        except:
+            raise ValueError(
+                'Unable to get preference from cluster matrix')
+
+    preference = ft(preference * factor)
+
+    #Copy input data and
+    #place preference on diagonal
+    random_state = np.random.RandomState(0)
+    x = np.finfo(ft).eps
+    y = np.finfo(ft).tiny * 100
+
+    for i in range(N):
+        SS[i, i] = (preference * x + y) * random_state.randn() + preference
+
+    SS.attrs['preference'] = preference
+
+    if verbose:
+        print 'Preference: %f' % preference
+
+    SSf.close()
+
+
+def aff_cluster(
+        Sfn,
         conv_iter=15,
         max_iter=2000,
         damping=0.95,
@@ -589,14 +562,11 @@ def aff_cluster(
         else:
             P.N = N
 
-        if not preference:
-            try:
-                preference = SS.attrs['preference']
-            except:
-                raise ValueError(
-                    'Unable to get preference from cluster matrix')
-
-        P.preference = preference
+        try:
+            preference = SS.attrs['preference']
+        except:
+            raise ValueError(
+                'Unable to get preference from cluster matrix')
 
         if max_iter < 0:
             raise ValueError('max_iter must be > 0')
@@ -643,8 +613,9 @@ def aff_cluster(
         if tl < l:
             P.disk = True
             try:
-                cache = int(sys.argv[1])
-                print sys.argv[1]
+                cache = 0
+#                cache = int(sys.argv[1])
+#                print sys.argv[1]
                 assert cache < l
             except:
                 cache = tl
@@ -689,18 +660,12 @@ def aff_cluster(
 
     #Copy input data and
     #place preference on diagonal
-    preference = P.preference
-    random_state = np.random.RandomState(0)
-    x = np.finfo(ft).eps
-    y = np.finfo(ft).tiny * 100
     z = - np.finfo(ft).max
 
-    for i in xrange(tb, te, ll):
+    for i in range(tb, te, ll):
         SSs.select_hyperslab((i, 0), (ll, N))
         SS.id.read(ms, SSs, tS)
-        for il in xrange(ll):
-            tS[il, i + il] = (preference * x + y) * random_state.randn() \
-                + preference
+
         if disk is True:
             Ss.select_hyperslab((i - tb, 0), (ll, N))
             S.id.write(ms, Ss, tS)
@@ -740,13 +705,13 @@ def aff_cluster(
     K = 0
     ind = np.arange(ll)
 
-    for it in xrange(max_iter):
+    for it in range(max_iter):
         if rank == 0:
             if verbose is True:
                 print '=' * 10 + 'It %d' % (it) + '=' * 10
                 tit = time.time()
         # Compute responsibilities
-        for i in xrange(tb, te, ll):
+        for i in range(tb, te, ll):
             if disk is True:
                 il = i - tb
                 Ss.select_hyperslab((il, 0), (ll, N))
@@ -774,7 +739,7 @@ def aff_cluster(
 
             tRp = np.maximum(tR, 0)
 
-            for il in xrange(ll):
+            for il in range(ll):
                 tRp[il, i + il] = tR[il, i + il]
                 tdR[i - tb + il] = tR[il, i + il]
 
@@ -794,7 +759,7 @@ def aff_cluster(
         comm.Barrier()
 
         # Compute availabilities
-        for j in xrange(tb, te, ll):
+        for j in range(tb, te, ll):
 
             As.select_hyperslab((0, j), (N, ll))
 
@@ -808,18 +773,18 @@ def aff_cluster(
             #tRp = Rp[:, j]
 
             tA = bn.nansum(tRpa, axis=0)[np.newaxis, :] - tRpa
-            for jl in xrange(ll):
+            for jl in range(ll):
                 tdA[j - tb + jl] = tA[j + jl, jl]
 
             tA = np.minimum(tA, 0)
 
-            for jl in xrange(ll):
+            for jl in range(ll):
                 tA[j + jl, jl] = tdA[j - tb + jl]
 
             tA *= (1 - damping)
             tA += damping * tAold
 
-            for jl in xrange(ll):
+            for jl in range(ll):
                 tdA[j - tb + jl] = tA[j + jl, jl]
 
             A.id.write(ms, As, tA)
@@ -881,7 +846,7 @@ def aff_cluster(
         C = np.zeros((N,), dtype=np.int)
         tC = np.zeros((l,), dtype=np.int)
 
-        for i in xrange(l):
+        for i in range(l):
             if disk is True:
                 Ss.select_hyperslab((i, 0), (1, N))
                 S.id.read(ms_l, Ss, tSl)
@@ -897,18 +862,18 @@ def aff_cluster(
 
         comm.Bcast([C, MPI.INT])
 
-        for k in xrange(K):
+        for k in range(K):
             ii = np.where(C == k)[0]
             tN = ii.shape[0]
 
-            tI = np.zeros((tN, ), dtype=np.float)
-            ttI = np.zeros((tN, ), dtype=np.float)
-            tttI = np.zeros((tN, ), dtype=np.float)
+            tI = np.zeros((tN, ), dtype=np.float32)
+            ttI = np.zeros((tN, ), dtype=np.float32)
+            tttI = np.zeros((tN, ), dtype=np.float32)
             ms_k = h5s.create_simple((tN,))
 
             j = rank
             while j < tN:
-                ind = [(ii[i], ii[j]) for i in xrange(tN)]
+                ind = [(ii[i], ii[j]) for i in range(tN)]
                 SSs.select_elements(ind)
                 SS.id.read(ms_k, SSs, tttI)
 
@@ -923,7 +888,7 @@ def aff_cluster(
         I.sort()
         comm.Bcast([I, MPI.INT])
 
-        for i in xrange(l):
+        for i in range(l):
             if disk is True:
                 Ss.select_hyperslab((i, 0), (1, N))
                 S.id.read(ms_l, Ss, tSl)
@@ -1115,6 +1080,81 @@ def render_aff(*args, **kwargs):
     AffRender(*args, **kwargs)
 
 
+def get_tasks():
+
+    tasks = OD([
+        ('load_pdb', load_pdb_coords),
+        ('calc_rmsd', calc_rmsd_matrix),
+        ('prepare_matrix', prepare_cluster_matrix),
+        ('calc_median', calc_median),
+        ('set_preference', set_preference),
+        ('aff_cluster', aff_cluster),
+        ('print_stat', print_stat),
+        ('render_results', render_b_factor)])
+
+    return tasks
+
+
+def get_tasks_wrapper():
+    tasks = get_tasks().keys()
+    tasks.extend(['cluster', 'all'])
+    return tasks
+
+
+def run_tasks(tasks, args):
+
+    mpi = init_mpi()
+
+    comm, NPROCS, rank = mpi
+
+    args['mpi'] = mpi
+
+    if len(tasks) == 1:
+        tsk = tasks[0]
+
+        if tsk == 'all':
+            tasks = get_tasks().keys()
+
+        elif tsk == 'cluster':
+            ntasks = get_tasks()
+            ntasks.pop('render_results')
+            tasks = ntasks.keys()
+
+    for t in tasks:
+        run_task(t, args)
+
+
+def run_task(task, args):
+
+    #Init logging
+    if rank == 0:
+        t0 = init_logging(task, args['verbose'])
+
+        if args['debug'] is True:
+
+            import cProfile
+            import pstats
+            import StringIO
+
+            pr = cProfile.Profile()
+            pr.enable()
+
+    tasks = get_tasks()
+    fn = tasks[task]
+    fn(**args)
+
+    if rank == 0:
+        finish_logging(task, t0, args['verbose'])
+
+        if args['debug'] is True:
+            pr.disable()
+            s = StringIO.StringIO()
+            sortby = 'tottime'
+            ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+            ps.print_stats()
+            print s.getvalue()
+
+
 def dummy(*args, **kwargs):
     pass
 
@@ -1126,6 +1166,7 @@ if __name__ == '__main__':
     def get_args(choices):
         """Parse cli arguments"""
 
+        print choices
         parser = ag.ArgumentParser(
             description='Parallel ffitiny propagation for biomolecules')
 
@@ -1136,6 +1177,7 @@ if __name__ == '__main__':
                             help='HDF5 file for all matrices')
 
         parser.add_argument('-t', '--task',
+                            nargs='+',
                             required=True,
                             choices=choices,
                             metavar='TASK',
@@ -1173,34 +1215,34 @@ if __name__ == '__main__':
                                 default=1.0,
                                 help='Multiplier for median')
 
-        cluster = parser.add_argument_group('cluster')
+        aff_cluster = parser.add_argument_group('aff_cluster')
 
-        cluster.add_argument('--preference',
-                             type=float,
-                             dest='preference',
-                             metavar='PREFERENCE',
-                             help='Override computed preference')
+        aff_cluster.add_argument('--preference',
+                                 type=float,
+                                 dest='preference',
+                                 metavar='PREFERENCE',
+                                 help='Override computed preference')
 
-        cluster.add_argument('--conv_iter',
-                             type=int,
-                             dest='conv_iter',
-                             metavar='ITERATIONS',
-                             default=15,
-                             help='Iterations to converge')
+        aff_cluster.add_argument('--conv_iter',
+                                 type=int,
+                                 dest='conv_iter',
+                                 metavar='ITERATIONS',
+                                 default=15,
+                                 help='Iterations to converge')
 
-        cluster.add_argument('--max_iter',
-                             type=int,
-                             dest='max_iter',
-                             metavar='ITERATIONS',
-                             default=2000,
-                             help='Maximum iterations')
+        aff_cluster.add_argument('--max_iter',
+                                 type=int,
+                                 dest='max_iter',
+                                 metavar='ITERATIONS',
+                                 default=2000,
+                                 help='Maximum iterations')
 
-        cluster.add_argument('--damping',
-                             type=float,
-                             dest='damping',
-                             metavar='DAMPING',
-                             default=0.95,
-                             help='Damping factor')
+        aff_cluster.add_argument('--damping',
+                                 type=float,
+                                 dest='damping',
+                                 metavar='DAMPING',
+                                 default=0.95,
+                                 help='Damping factor')
 
         render = parser.add_argument_group('render')
 
@@ -1250,7 +1292,7 @@ if __name__ == '__main__':
     exit = False
 
     try:
-        args = get_args(get_tasks())
+        args = get_args(get_tasks_wrapper())
     except SystemExit:
         exit = True
 
@@ -1261,4 +1303,4 @@ if __name__ == '__main__':
     else:
         args = comm.bcast(args)
 
-    run_task(args['task'], args)
+    run_tasks(args['task'], args)
