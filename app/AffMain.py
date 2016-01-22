@@ -3,7 +3,6 @@
 #General modules
 import os
 import re
-import sys
 import time
 import uuid
 import shutil
@@ -36,13 +35,141 @@ from pyRMSD import condensedMatrix
 from AffRender import AffRender
 
 
+import argparse as ag
+
+
+#@master
+def get_args(choices):
+    """Parse cli arguments"""
+
+    print choices
+    parser = ag.ArgumentParser(
+        description='Parallel ffitiny propagation for biomolecules')
+
+    parser.add_argument('-m',
+                        required=True,
+                        dest='Sfn',
+                        metavar='FILE.hdf5',
+                        help='HDF5 file for all matrices')
+
+    parser.add_argument('-t', '--task',
+                        nargs='+',
+                        required=True,
+                        choices=choices,
+                        metavar='TASK',
+                        help='Task to do. Available options \
+                        are: %s' % ", ".join(choices))
+
+    parser.add_argument('--debug',
+                        action='store_true',
+                        help='Perform profiling')
+
+    parser.add_argument('--verbose',
+                        action='store_true',
+                        help='Be verbose')
+
+    load_pdb = parser.add_argument_group('load_pdb')
+
+    load_pdb.add_argument('-f',
+                          nargs='*',
+                          type=str,
+                          dest='pdb_list',
+                          metavar='FILE',
+                          help='PDB files')
+
+    load_pdb.add_argument('-s',
+                          type=str,
+                          dest='topology',
+                          help='Topology PDB file')
+
+    preference = parser.add_argument_group('calculate_preference')
+
+    preference.add_argument('--factor',
+                            type=float,
+                            dest='factor',
+                            metavar='FACTOR',
+                            default=1.0,
+                            help='Multiplier for median')
+
+    aff_cluster = parser.add_argument_group('aff_cluster')
+
+    aff_cluster.add_argument('--preference',
+                             type=float,
+                             dest='preference',
+                             metavar='PREFERENCE',
+                             help='Override computed preference')
+
+    aff_cluster.add_argument('--conv_iter',
+                             type=int,
+                             dest='conv_iter',
+                             metavar='ITERATIONS',
+                             default=15,
+                             help='Iterations to converge')
+
+    aff_cluster.add_argument('--max_iter',
+                             type=int,
+                             dest='max_iter',
+                             metavar='ITERATIONS',
+                             default=2000,
+                             help='Maximum iterations')
+
+    aff_cluster.add_argument('--damping',
+                             type=float,
+                             dest='damping',
+                             metavar='DAMPING',
+                             default=0.95,
+                             help='Damping factor')
+
+    render = parser.add_argument_group('render')
+
+    render.add_argument('-o', '--output',
+                        metavar='output.png',
+                        help='Output PNG image')
+
+    render.add_argument('--nums',
+                        nargs='*', type=int,
+                        help='Values for numerical labels')
+
+    render.add_argument('--draw_nums',
+                        action='store_true',
+                        help='Draw numerical labels')
+
+    render.add_argument('--guess_nums',
+                        action='store_true',
+                        help='Guess nums from filenames',
+                        default=False)
+
+    render.add_argument('--clear',
+                        action='store_true',
+                        help='Clear intermidiate files')
+
+    render.add_argument('--width',
+                        nargs='?', type=int, default=640,
+                        help='Width of individual image')
+
+    render.add_argument('--height',
+                        nargs='?', type=int, default=480,
+                        help='Height of individual image')
+
+    render.add_argument('--moltype',
+                        nargs='?', type=str, default="general",
+                        choices=["general", "origami"],
+                        help='Height of individual image')
+
+    args = parser.parse_args()
+
+    args_dict = vars(args)
+
+    return args_dict
+
+
 class Bunch(object):
     def __init__(self, adict):
         self.__dict__.update(adict)
 
 
 def master(fn):
-    comm, NPROCS, rank = init_mpi()
+    #comm, NPROCS, rank = init_mpi()
 
     def dummy(*args, **kwargs):
         pass
@@ -105,14 +232,14 @@ def load_pdb_coords(
         check_pbc(pc)
         return pc
 
-    @master
+#    @master
     def estimate_pdb_numatoms(topology):
 
         pdb_t = parse_pdb(topology)
 
         return pdb_t.shape
 
-    @master
+#    @master
     def estimate_coord_shape(
             ftype='pdb',
             pdb_list=None,
@@ -135,11 +262,12 @@ def load_pdb_coords(
 
         return shape
 
-    @master
+#    @master
     def load_pdb_names(Sfn, pdb_list, topology=None):
         N = len(pdb_list)
 
         Sf = h5py.File(Sfn, 'r+', driver='sec2')
+        Sf.atomic = True
 
         vls = h5py.special_dtype(vlen=str)
         L = Sf.create_dataset(
@@ -256,6 +384,7 @@ def calc_rmsd_matrix(
 
     #Reread structures by every process
     Sf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
+    Sf.atomic = True
     S = Sf['struct']
     #Count number of structures
     N = S.len()
@@ -312,6 +441,8 @@ def calc_rmsd_matrix(
     #Wait for all processes
     comm.Barrier()
 
+    if rank == 0:
+        print np.sum(RM)
     #Cleanup
     #Close matrix file
     Sf.close()
@@ -324,14 +455,13 @@ def prepare_cluster_matrix(
         *args, **kwargs):
 
     def calc_chunk(l, tRM, tCM):
-        ttCM = tCM * random_state.randn(l, l)
-        ttCM += tRM
+        ttCM = tRM + tCM * random_state.randn(l, l)
         return ttCM
 
     def calc_chunk_diag(l, tRM, tCM):
-        tCM += tCM.transpose()
-        tRM += tRM.transpose()
-        ttCM = calc_chunk(l, tRM, tCM)
+        ttCM = tCM + tCM.transpose()
+        ttRM = tRM + tRM.transpose()
+        ttCM = calc_chunk(l, ttRM, ttCM)
         return ttCM
 
     comm, NPROCS, rank = mpi
@@ -339,8 +469,10 @@ def prepare_cluster_matrix(
     #Init RMSD matrix
     #Open matrix file in parallel mode
     RMf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
+    RMf.atomic = True
     #Open table with data for clusterization
     RM = RMf['rmsd']
+    RMs = RM.id.get_space()
 
     N = RM.len()
     l = N // NPROCS
@@ -362,37 +494,66 @@ def prepare_cluster_matrix(
         dtype=np.float32,
         chunks=(l, l))
     CM.attrs['chunk'] = l
+    CMs = CM.id.get_space()
 
     random_state = np.random.RandomState(0)
     x = np.finfo(np.float32).eps
     y = np.finfo(np.float32).tiny * 100
 
-    #Init calculations
-    i = rank
+    #Partiotioning
+    lN = (NPROCS + 1) * NPROCS / 2
 
-    while i < N:
+    m = lN // NPROCS
+    mr = lN % NPROCS
+
+    if mr > 0:
+        m = m + 1 if rank % 2 == 0 else m
+
+    #Init calculations
+    tRM = np.zeros((l, l), dtype=np.float32)
+    tCM = np.zeros((l, l), dtype=np.float32)
+    ttCM = np.zeros((l, l), dtype=np.float32)
+    ms = h5s.create_simple((l, l))
+
+    i, j = rank, rank
+
+    for c in range(m):
         if rank == 0:
             tit = time.time()
+        RMs.select_hyperslab((i * l, j * l), (l, l))
+        RM.id.read(ms, RMs, tRM)
 
-        tRM = RM[i:, i]
-
+        #tRM = -1 * tRM ** 2
         tRM **= 2
         tRM *= -1
         tCM = tRM * x + y
-        ttCM = tRM + tCM * random_state.randn(N - i)
 
-        CM[i:, i] = ttCM[:]
-#
-        ttCM = tRM + tCM * random_state.randn(N - i)
-        CM[i, i:] = ttCM[:]
+        print i, j
+        if i == j:
+            ttCM = calc_chunk_diag(l, tRM[:], tCM[:])
+            CMs.select_hyperslab((i * l, j * l), (l, l))
+            CM.id.write(ms, CMs, ttCM)
+
+        else:
+            ttCM = calc_chunk(l, tRM[:], tCM[:])
+            CMs.select_hyperslab((i * l, j * l), (l, l))
+            CM.id.write(ms, CMs, ttCM)
+
+            ttCM = calc_chunk(l, tRM.transpose(), tCM.transpose())
+            CMs.select_hyperslab((j * l, i * l), (l, l))
+            CM.id.write(ms, CMs, ttCM)
 
         if rank == 0:
             teit = time.time()
             if verbose:
-                print "Step T %s" % (teit - tit)
-#                print "Step %d of %d T %s" % (, teit - tit)
+                print "Step %d of %d T %s" % (c, m, teit - tit)
 
-        i += NPROCS
+        if (rank - c) > 0:
+            j = j - 1
+        elif (rank - c) == 0:
+            i = NPROCS - rank - 1
+        else:
+            j = j + 1
 
     #Wait for all processes
     comm.Barrier()
@@ -400,13 +561,13 @@ def prepare_cluster_matrix(
     if rank == 0:
 #        print CM[10, 3], CM[3, 10]
 #        print sum(CM[-1])
+        print CM[:]
         print np.sum(CM)
-#        print CM[:]
 
     RMf.close()
 
 
-@master
+#@master
 def calc_median(
         Sfn,
         mpi=None,
@@ -423,7 +584,7 @@ def calc_median(
     #Init cluster matrix
     #Open matrix file in single mode
     CMf = h5py.File(Sfn, 'r+', driver='sec2')
-    #CMf.atomic = True
+    CMf.atomic = True
     #Open table with data for clusterization
     CM = CMf['cluster']
 
@@ -452,20 +613,15 @@ def calc_median(
     #level, median = med.quantiles()[0]
     median = med.quantile()
 
-    median = np.median(CM)
-
     if verbose:
         print 'Median: %f' % median
-
-    if rank == 0:
-        print np.median(CM)
 
     CM.attrs['median'] = median
 
     CMf.close()
 
 
-@master
+#@master
 def set_preference(
         Sfn,
         preference=None,
@@ -481,8 +637,12 @@ def set_preference(
     #Get file name
     #Open matrix file in parallel mode
     SSf = h5py.File(Sfn, 'r+', driver='sec2')
+    SSf.atomic = True
     #Open table with data for clusterization
     SS = SSf['cluster']
+    SSs = SS.id.get_space()
+    ms = h5s.create_simple((1, 1))
+    tS = np.zeros((1,), dtype=np.float32)
 
     ft = np.float32
 
@@ -508,7 +668,10 @@ def set_preference(
     y = np.finfo(ft).tiny * 100
 
     for i in range(N):
-        SS[i, i] = (preference * x + y) * random_state.randn() + preference
+        tS[0] = preference + (preference * x + y) * random_state.randn()
+        print tS
+        SSs.select_hyperslab((i, i), (1, 1))
+        SS.id.write(ms, SSs, tS)
 
     SS.attrs['preference'] = preference
 
@@ -536,6 +699,7 @@ def aff_cluster(
     #Get file name
     #Open matrix file in parallel mode
     SSf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
+    SSf.atomic = True
     #Open table with data for clusterization
     SS = SSf['cluster']
     SSs = SS.id.get_space()
@@ -654,6 +818,7 @@ def aff_cluster(
         TMLfd = tempfile.mkdtemp()
         TMLfn = osp(TMLfd, P.TMbfn + '_' + str(rank) + '.hdf5')
         TMLf = h5py.File(TMLfn, 'w')
+        TMLf.atomic = True
 
         S = TMLf.create_dataset('S', (l, N), dtype=ft)
         Ss = S.id.get_space()
@@ -948,7 +1113,7 @@ def aff_cluster(
             Sf.close()
 
 
-@master
+#@master
 def print_stat(
         Sfn,
         mpi=None,
@@ -986,7 +1151,7 @@ def print_stat(
             f.write("%d\t%s\t%d\t%.3f\n" % (i, L[C[i]], cs[i], pcs[i]))
 
 
-@master
+#@master
 def render_b_factor(
         Sfn,
         mpi=None,
@@ -1074,7 +1239,7 @@ def render_b_factor(
 #            f.write("%d\t%s\t%d\t%.3f\n" % (i, L[C[i]], cs[i], pcs[i]))
 
 
-@master
+#@master
 def render_aff(*args, **kwargs):
 
     AffRender(*args, **kwargs)
@@ -1103,11 +1268,7 @@ def get_tasks_wrapper():
 
 def run_tasks(tasks, args):
 
-    mpi = init_mpi()
-
-    comm, NPROCS, rank = mpi
-
-    args['mpi'] = mpi
+    comm, NPROCS, rank = args['mpi']
 
     if len(tasks) == 1:
         tsk = tasks[0]
@@ -1122,9 +1283,12 @@ def run_tasks(tasks, args):
 
     for t in tasks:
         run_task(t, args)
+        comm.Barrier()
 
 
 def run_task(task, args):
+
+    comm, NPROCS, rank = args['mpi']
 
     #Init logging
     if rank == 0:
@@ -1154,153 +1318,29 @@ def run_task(task, args):
             ps.print_stats()
             print s.getvalue()
 
+    comm.Barrier()
+
 
 def dummy(*args, **kwargs):
     pass
 
 if __name__ == '__main__':
 
-    import argparse as ag
+    mpi = init_mpi()
 
-    @master
-    def get_args(choices):
-        """Parse cli arguments"""
-
-        print choices
-        parser = ag.ArgumentParser(
-            description='Parallel ffitiny propagation for biomolecules')
-
-        parser.add_argument('-m',
-                            required=True,
-                            dest='Sfn',
-                            metavar='FILE.hdf5',
-                            help='HDF5 file for all matrices')
-
-        parser.add_argument('-t', '--task',
-                            nargs='+',
-                            required=True,
-                            choices=choices,
-                            metavar='TASK',
-                            help='Task to do. Available options \
-                            are: %s' % ", ".join(choices))
-
-        parser.add_argument('--debug',
-                            action='store_true',
-                            help='Perform profiling')
-
-        parser.add_argument('--verbose',
-                            action='store_true',
-                            help='Be verbose')
-
-        load_pdb = parser.add_argument_group('load_pdb')
-
-        load_pdb.add_argument('-f',
-                              nargs='*',
-                              type=str,
-                              dest='pdb_list',
-                              metavar='FILE',
-                              help='PDB files')
-
-        load_pdb.add_argument('-s',
-                              type=str,
-                              dest='topology',
-                              help='Topology PDB file')
-
-        preference = parser.add_argument_group('calculate_preference')
-
-        preference.add_argument('--factor',
-                                type=float,
-                                dest='factor',
-                                metavar='FACTOR',
-                                default=1.0,
-                                help='Multiplier for median')
-
-        aff_cluster = parser.add_argument_group('aff_cluster')
-
-        aff_cluster.add_argument('--preference',
-                                 type=float,
-                                 dest='preference',
-                                 metavar='PREFERENCE',
-                                 help='Override computed preference')
-
-        aff_cluster.add_argument('--conv_iter',
-                                 type=int,
-                                 dest='conv_iter',
-                                 metavar='ITERATIONS',
-                                 default=15,
-                                 help='Iterations to converge')
-
-        aff_cluster.add_argument('--max_iter',
-                                 type=int,
-                                 dest='max_iter',
-                                 metavar='ITERATIONS',
-                                 default=2000,
-                                 help='Maximum iterations')
-
-        aff_cluster.add_argument('--damping',
-                                 type=float,
-                                 dest='damping',
-                                 metavar='DAMPING',
-                                 default=0.95,
-                                 help='Damping factor')
-
-        render = parser.add_argument_group('render')
-
-        render.add_argument('-o', '--output',
-                            metavar='output.png',
-                            help='Output PNG image')
-
-        render.add_argument('--nums',
-                            nargs='*', type=int,
-                            help='Values for numerical labels')
-
-        render.add_argument('--draw_nums',
-                            action='store_true',
-                            help='Draw numerical labels')
-
-        render.add_argument('--guess_nums',
-                            action='store_true',
-                            help='Guess nums from filenames',
-                            default=False)
-
-        render.add_argument('--clear',
-                            action='store_true',
-                            help='Clear intermidiate files')
-
-        render.add_argument('--width',
-                            nargs='?', type=int, default=640,
-                            help='Width of individual image')
-
-        render.add_argument('--height',
-                            nargs='?', type=int, default=480,
-                            help='Height of individual image')
-
-        render.add_argument('--moltype',
-                            nargs='?', type=str, default="general",
-                            choices=["general", "origami"],
-                            help='Height of individual image')
-
-        args = parser.parse_args()
-
-        args_dict = vars(args)
-
-        return args_dict
-
-    comm, NPROCS, rank = init_mpi()
+    comm, NPROCS, rank = mpi
 
     args = None
     exit = False
 
-    try:
-        args = get_args(get_tasks_wrapper())
-    except SystemExit:
-        exit = True
+    if rank == 0:
+        try:
+            args = get_args(get_tasks_wrapper())
+        except SystemExit:
+            comm.abort()
 
-    exit = comm.bcast(exit)
+    args = comm.bcast(args)
 
-    if exit is True:
-        sys.exit()
-    else:
-        args = comm.bcast(args)
+    args['mpi'] = mpi
 
     run_tasks(args['task'], args)
