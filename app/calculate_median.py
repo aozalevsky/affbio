@@ -23,7 +23,7 @@ from h5py import h5s
 #from livestats import livestats
 import pyximport
 pyximport.install()
-import lvc
+import lvc_double
 
 print 'Calculating median'
 
@@ -39,8 +39,6 @@ if debug is True:
     import StringIO
     pr = cProfile.Profile()
     pr.enable()
-
-
 
 #Init cluster matrix
 #Get file name
@@ -69,7 +67,7 @@ if l <= 0:
 
 #Init calculations
 #med = livestats.LiveStats()
-med = lvc.Quantile(0.5)
+med = lvc_double.Quantile(0.5)
 madd = np.vectorize(med.add)
 
 tCM = np.zeros((N,), dtype=np.float)

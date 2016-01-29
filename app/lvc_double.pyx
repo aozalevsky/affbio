@@ -9,21 +9,21 @@ cimport numpy as np
 from cython.parallel import *
 
 
-#DTYPE = np.float32
+#DTYPE = np.float
 #ctypedef np.int_t DTYPE_t
 
-cdef float calcP2(float qp1, float q, float qm1, float d, float np1, float n, float nm1):
-    cdef float outer, inner_left, inner_right
+cdef double calcP2(double qp1, double q, double qm1, double d, double np1, double n, double nm1):
+    cdef double outer, inner_left, inner_right
     outer = d / (np1 - nm1)
     inner_left = (n - nm1 + d) * (qp1 - q ) / (np1 - n)
     inner_right = (np1 - n - d) * (q - qm1 ) / (n - nm1)
 
     return q + outer * (inner_left + inner_right)
 
-cdef sort(long c, float[:] hv):
+cdef sort(long c, double[:] hv):
     cdef:
         int i, j
-        float x
+        double x
 
     for i in xrange(1, c):
         x = hv[i]
@@ -37,35 +37,35 @@ cdef class Quantile:
     cdef:
         long LEN, c
         bint initialized
-        float p
-        float[:] hv, nv, dv
+        double p
+        double[:] hv, nv, dv
         long[:] pv
 
-    def __init__(self, float p):
+    def __init__(self, double p):
         """ Constructs a single quantile object """
         cdef:
             long i
         self.pv = np.arange(1, self.LEN + 1)
         self.LEN = 5
-        self.dv = np.array([0, p/2, p, (1 + p)/2, 1], dtype=np.float32)
-        self.nv = np.array([1, 1 + 2*p, 1 + 4*p, 3 + 2*p, 5], dtype=np.float32)
+        self.dv = np.array([0, p/2, p, (1 + p)/2, 1], dtype=np.float)
+        self.nv = np.array([1, 1 + 2*p, 1 + 4*p, 3 + 2*p, 5], dtype=np.float)
         self.pv = np.arange(1, self.LEN + 1, dtype=np.int)
-        self.hv = np.empty((self.LEN,), dtype=np.float32)
+        self.hv = np.empty((self.LEN,), dtype=np.float)
         self.c = 0
         self.initialized = False
         self.p = p
 
 
-    cpdef add(self, float[:] item):
+    cpdef add(self, double[:] item):
         cdef long l = len(item)
         for i in xrange(l):
             self.add_e(item[i])
 
-    cdef add_e(self, float item):
+    cdef add_e(self, double item):
         """ Adds another datum """
         cdef:
             long i, j, k
-            float[:] hv, nv, dv
+            double[:] hv, nv, dv
             long[:] pv
 
         hv = self.hv
@@ -104,7 +104,7 @@ cdef class Quantile:
 
         cdef:
             long d
-            float n, q, qp1, qm1, np1, nm1, qn
+            double n, q, qp1, qm1, np1, nm1, qn
 
         for i in xrange(1, self.LEN - 1):
             n = pv[i]
@@ -129,8 +129,8 @@ cdef class Quantile:
 
                 pv[i] = <long>(n + d)
 
-    cpdef float quantile(self):
-        cdef float[:] hv = self.hv
+    cpdef double quantile(self):
+        cdef double[:] hv = self.hv
         if self.initialized:
             return hv[2]
         else:
@@ -142,14 +142,14 @@ cdef class Quantile:
 
 cdef class LiveStats:
     cdef:
-        float min_val, max_val
-        float average, var_m2, skew_m3, kurt_m4
+        double min_val, max_val
+        double average, var_m2, skew_m3, kurt_m4
         long count
         dict tiles
         bint initialized
 
     def __init__(self, list p = [0.5]):
-        cdef float i
+        cdef double i
         """ Constructs a LiveStream object
 
         Keyword arguments:
@@ -169,16 +169,16 @@ cdef class LiveStats:
         for i in p:
             self.tiles[i] = Quantile(i)
 
-    cpdef add(self, np.ndarray[np.float32_t, ndim=1]  item):
+    cpdef add(self, np.ndarray[np.float_t, ndim=1]  item):
         cdef long l = item.shape[0]
         for i in xrange(l):
             self.add_e(item[i])
 
 
 
-    def add_e(self, float item):
+    def add_e(self, double item):
         """ Adds another datum """
-        cdef float delta
+        cdef double delta
 
         delta = item - self.average
 
@@ -207,15 +207,15 @@ cdef class LiveStats:
         """ Returns a list of tuples of the quantile and its location """
         return [(key, val.quantile()) for key, val in self.tiles.items()]
 
-    cpdef float maximum(self):
+    cpdef double maximum(self):
         """ Returns the maximum value given """
         return self.max_val
 
-    cpdef float mean(self):
+    cpdef double mean(self):
         """ Returns the cumulative moving average of the data """
         return self.average
 
-    cpdef float minimum(self):
+    cpdef double minimum(self):
         """ Returns the minimum value given """
         return self.min_val
 
@@ -223,21 +223,21 @@ cdef class LiveStats:
         """ Returns the number of items added so far"""
         return self.count
 
-    cpdef float variance(self):
+    cpdef double variance(self):
         """ Returns the sample variance of the data given so far"""
         if self.count > 1:
             return self.var_m2 / (self.count - 1)
         else:
             return float('NaN')
 
-    cpdef float kurtosis(self):
+    cpdef double kurtosis(self):
         """ Returns the sample kurtosis of the data given so far"""
         if self.count > 1:
             return self.kurt_m4 / (self.count * self.variance()**2.0) - 3.0
         else:
             return float('NaN')
 
-    cpdef float skewness(self):
+    cpdef double skewness(self):
         """ Returns the sample skewness of the data given so far"""
         if self.count > 1:
             return self.skew_m3 / (self.count * self.variance()**1.5)
