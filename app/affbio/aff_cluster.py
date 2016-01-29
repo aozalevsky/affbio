@@ -149,8 +149,8 @@ def aff_cluster(
 
     tb, te = task(N, NPROCS, rank)
 
-    tS = np.ndarray((ll, N), dtype=ft)
-    tSl = np.ndarray((N,), dtype=ft)
+    tS = np.zeros((ll, N), dtype=ft)
+    tSl = np.zeros((N,), dtype=ft)
 
     disk = P.disk
 
@@ -190,25 +190,27 @@ def aff_cluster(
     Rp = TMf.create_dataset('Rp', (N, N), dtype=ft)
     Rps = Rp.id.get_space()
 
-    tRp = np.ndarray((ll, N), dtype=ft)
-    tRpa = np.ndarray((N, ll), dtype=ft)
+    tRp = np.zeros((ll, N), dtype=ft)
+    tRpa = np.zeros((N, ll), dtype=ft)
 
     A = TMf.create_dataset('A', (N, N), dtype=ft)
     As = A.id.get_space()
 
-    tAS = np.ndarray((ll, N), dtype=ft)
-    tAold = np.ndarray((N, ll), dtype=ft)
-    tA = np.ndarray((N, ll), dtype=ft)
-    tdA = np.ndarray((l,), dtype=ft)
+    tAS = np.zeros((ll, N), dtype=ft)
+    tAold = np.zeros((N, ll), dtype=ft)
+    tA = np.zeros((N, ll), dtype=ft)
+    tdA = np.zeros((l,), dtype=ft)
 
-    e = np.ndarray((N, conv_iter), dtype=np.int8)
-    tE = np.ndarray((N,), dtype=np.int8)
-    ttE = np.ndarray((l,), dtype=np.int8)
+    e = np.zeros((N, conv_iter), dtype=np.int8)
+    tE = np.zeros((N,), dtype=np.int8)
+    ttE = np.zeros((l,), dtype=np.int8)
 
     converged = False
     cK = 0
     K = 0
     ind = np.arange(ll)
+
+    comm.Barrier()
 
     for it in range(max_iter):
         if rank == 0:
@@ -287,7 +289,11 @@ def aff_cluster(
                 tA[j + jl, jl] = tdA[j - tb + jl]
 
             tA *= (1 - damping)
-            tA += damping * tAold
+
+            if it == 0:
+                print damping, tAold, tA
+
+            tA += 0.95 * tAold
 
             for jl in range(ll):
                 tdA[j - tb + jl] = tA[j + jl, jl]
@@ -306,6 +312,7 @@ def aff_cluster(
             comm.Bcast([tE, MPI.INT])
         else:
             tE = ttE
+
         e[:, it % conv_iter] = tE
         pK = K
         K = bn.nansum(tE)
