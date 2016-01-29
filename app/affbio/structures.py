@@ -22,6 +22,7 @@ from .utils import task
 def load_pdb_coords(
         Sfn,
         pdb_list,
+        tier=1,
         topology=None,
         mpi=None,
         verbose=False,
@@ -96,7 +97,10 @@ def load_pdb_coords(
     shape = None
 
     if rank == 0:
-        shape = estimate_coord_shape(pdb_list=pdb_list, topology=topology)
+        shape = estimate_coord_shape(
+            pdb_list=pdb_list,
+            topology=topology,
+            tier=tier)
 
     shape = comm.bcast(shape)
     N = shape[0]
@@ -105,9 +109,10 @@ def load_pdb_coords(
     #Init storage for matrices
     #HDF5 file
     Sf = h5py.File(Sfn, 'w', driver='mpio', comm=comm)
-    Sf.atomic = True
     #Table for RMSD
-    S = Sf.create_dataset(
+    Gn = 'tier%d' % tier
+    G = Sf.require_group(Gn)
+    S = G.require_dataset(
         'struct',
         shape,
         dtype=np.float,

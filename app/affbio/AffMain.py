@@ -24,6 +24,13 @@ def get_args(choices):
                         metavar='FILE.hdf5',
                         help='HDF5 file for all matrices')
 
+    parser.add_argument('-r', '--round',
+                        required=True,
+                        dest='round',
+                        metavar='TIER',
+                        default=1,
+                        help='Round of clusterization')
+
     parser.add_argument('-t', '--task',
                         nargs='+',
                         required=True,
@@ -197,6 +204,7 @@ def run_task(task, args):
             pr.enable()
 
     tasks = main_tasks()
+    tasks.update(misc_tasks())
     fn = tasks[task]
     fn(**args)
 
