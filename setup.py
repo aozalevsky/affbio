@@ -5,7 +5,7 @@ from codecs import open
 from os import path
 
 from setuptools.extension import Extension
-from Cython.Build         import cythonize
+from Cython.Build import cythonize
 
 import pypandoc
 
@@ -15,13 +15,17 @@ here = path.abspath(path.dirname(__file__))
 
 long_description = pypandoc.convert('README.md', 'rst')
 
-with open(path.join(here, 'README.md'), encoding='utf-8') as f:
-    long_description = f.read()
+try:
+    description = pypandoc.convert('README.md', 'rst')
+except (IOError, ImportError):
+    description = open('README.md').read()
+
+long_description = description
 
 extensions = [
-        Extension(
-                "affbio/lvc",
-                ["affbio/lvc.pyx"])
+    Extension(
+        "affbio/lvc",
+        ["affbio/lvc.pyx"])
 ]
 
 
