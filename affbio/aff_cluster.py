@@ -34,7 +34,10 @@ def aff_cluster(
 
     comm, NPROCS, rank = mpi
 
-    NPROCS_LOCAL = int(os.environ['OMPI_COMM_WORLD_LOCAL_SIZE'])
+    if 'OMPI_COMM_WORLD_LOCAL_SIZE' in os.environ:
+        NPROCS_LOCAL = int(os.environ['OMPI_COMM_WORLD_LOCAL_SIZE'])
+    else:
+        NPROCS_LOCAL = 1
 
     #Init storage for matrices
     #Get file name

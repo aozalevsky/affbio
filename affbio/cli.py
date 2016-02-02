@@ -40,6 +40,7 @@ def get_args(choices):
                         are: %s' % ", ".join(choices))
 
     parser.add_argument('-o', '--output',
+                        dest='output',
                         metavar='OUTPUT',
                         help='For "render" ans "cluster_to_trj" tasks \
                         name of output PNG image of mutiframe PDB file')
@@ -117,9 +118,10 @@ def get_args(choices):
                         action='store_true',
                         help='Draw numerical labels')
 
-    render.add_argument('--clear',
-                        action='store_true',
-                        help='Clear intermidiate files')
+    render.add_argument('--noclear',
+                        dest='clear',
+                        action='store_false',
+                        help='Do not clear intermidiate files')
 
     render.add_argument('--width',
                         nargs='?', type=int, default=640,
@@ -139,6 +141,7 @@ def get_args(choices):
     export.add_argument('-i, --index',
                         metavar='INDEX',
                         type=int,
+                        dest='index',
                         help='Index of cluster to be exported')
 
     args = parser.parse_args()

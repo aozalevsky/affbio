@@ -20,7 +20,7 @@ def cluster_to_trj(
         tier=1,
         index=None,
         merged=False,
-        out=None,
+        output=None,
         mpi=None,
         verbose=False,
         debug=False,
@@ -65,17 +65,18 @@ def cluster_to_trj(
     ind = np.where(I == index)
     frames = L[ind]
 
+    print frames, output
     j = 0
 
-    with open(frames[j], 'r') as fin, open(out, 'w') as fout:
+    with open(frames[j], 'r') as fin, open(output, 'w') as fout:
         fout.write(fin.read())
 
     top = Sf['tier1']['labels'].attrs['topology']
-    copy_connects(top, out)
+    copy_connects(top, output)
 
-    with open(out, 'r+') as fout:
+    with open(output, 'r+') as fout:
         for j in range(1, len(frames)):
-            with open(frames[0], 'r') as fin:
+            with open(frames[j], 'r') as fin:
                 fout.write(fin.read())
 
 
@@ -121,7 +122,7 @@ def render_b_factor(
         cluster_to_trj(Sfn,
                        index=i,
                        merged=merged,
-                       out=TMtrj,
+                       output=TMtrj,
                        mpi=mpi)
         TMbfac = TMbfn + '_b.pdb'
         TMxvg = TMbfn + '.xvg'
