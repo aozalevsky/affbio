@@ -15,8 +15,8 @@ f = h5py.File(matf, 'r')
 #Table for RMSD
 #rmsd_matrix = f['rmsd']
 #Table for clusterization
-cl_matrix = f['cluster']
-pref = f['cluster'].attrs['median']
+cl_matrix = f['tier1']['cluster']
+pref = f['tier1']['cluster'].attrs['median']
 #Reread structures by every process
 
 t0 = dt.datetime.now()
