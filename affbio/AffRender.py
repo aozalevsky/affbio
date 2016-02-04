@@ -203,11 +203,8 @@ class AffRender(object):
         return name
 
     def ray(self, name, width=640, height=480):
-        #ray 3200, 2400
-        #pymol.cmd.png("DDD.png", dpi=1000)
-        #pymol.cmd.ray("3200", "2400")
         #pymol.cmd.zoom("all", 100)
-        self.pymol.cmd.zoom("all")
+        self.pymol.cmd.zoom("all", 20)
         self.pymol.cmd.ray(width, height)
         self.pymol.cmd.save(name)
 
