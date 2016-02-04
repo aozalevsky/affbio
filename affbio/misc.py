@@ -26,26 +26,6 @@ def cluster_to_trj(
         debug=False,
         *args, **kwargs):
 
-    def copy_connects(src, dst):
-        with open(src, 'r') as fin, open(dst, 'r') as fout:
-            inpdb = np.array(fin.readlines())
-            ind = np.array(
-                map(lambda x: re.match('CONECT', x), inpdb),
-                dtype=np.bool)
-            con = inpdb[ind]
-
-            outpdb = fout.readlines()
-            endmdl = 'ENDMDL\n'
-            outpdb.reverse()
-            endmdl_ind = -1 - outpdb.index(endmdl)
-            outpdb.reverse()
-            outpdb.pop(endmdl_ind)
-            outpdb.extend(con)
-            outpdb.append(endmdl)
-
-        with open(dst, 'w') as fout:
-            fout.write(''.join(outpdb))
-
     comm, NPROCS, rank = mpi
 
     if rank != 0:
@@ -73,7 +53,7 @@ def cluster_to_trj(
     top = Sf['tier1']['labels'].attrs['topology']
     copy_connects(top, output)
 
-    with open(output, 'r+') as fout:
+    with open(output, 'a') as fout:
         for j in range(1, len(frames)):
             with open(frames[j], 'r') as fin:
                 fout.write(fin.read())
@@ -94,6 +74,9 @@ def render_b_factor(
         return
 
     Sf = h5py.File(Sfn, 'r', driver='sec2')
+
+    top = Sf['tier1']['labels'].attrs['topology']
+
     Gn = 'tier%d' % tier
     G = Sf.require_group(Gn)
 
@@ -141,6 +124,7 @@ def render_b_factor(
         os.remove(TMxvg)
         os.remove(TMtrj)
 
+        copy_connects(top, TMbfac)
         centers.append(TMbfac)
 
         kwargs['pdb_list'] = centers
@@ -151,84 +135,22 @@ def render_b_factor(
     map(os.remove, centers)
 
 
-def render_b_factor_old(
-        Sfn,
-        mpi=None,
-        tier=1,
-        verbose=False,
-        debug=False,
-        *args, **kwargs):
+def copy_connects(src, dst):
+    with open(src, 'r') as fin, open(dst, 'r') as fout:
+        inpdb = np.array(fin.readlines())
+        ind = np.array(
+            map(lambda x: re.match('CONECT', x), inpdb),
+            dtype=np.bool)
+        con = inpdb[ind]
 
-    def copy_connects(src, dst):
-        with open(src, 'r') as fin, open(dst, 'r') as fout:
-            inpdb = np.array(fin.readlines())
-            ind = np.array(
-                map(lambda x: re.match('CONECT', x), inpdb),
-                dtype=np.bool)
-            con = inpdb[ind]
+        outpdb = fout.readlines()
+        endmdl = 'ENDMDL\n'
+        outpdb.reverse()
+        endmdl_ind = -1 - outpdb.index(endmdl)
+        outpdb.reverse()
+        outpdb.pop(endmdl_ind)
+        outpdb.extend(con)
+        outpdb.append(endmdl)
 
-            outpdb = fout.readlines()
-            endmdl = 'ENDMDL\n'
-            endmdl_ind = outpdb.index(endmdl)
-            outpdb.pop(endmdl_ind)
-            outpdb.extend(con)
-            outpdb.append(endmdl)
-
-        with open(dst, 'w') as fout:
-            fout.write(''.join(outpdb))
-
-    comm, NPROCS, rank = mpi
-
-    if rank != 0:
-        return
-
-    Sf = h5py.File(Sfn, 'r', driver='sec2')
-
-    C = Sf['aff_centers'][:]
-    NC = len(C)
-
-    I = Sf['aff_labels'][:]
-    NI = len(I)
-
-    L = Sf['labels'][:]
-
-    cs = np.bincount(I)
-    pcs = cs * 100.0 / NI
-
-    centers = []
-
-    for i in range(NC):
-
-        TMtrj = cluster_to_trj(Sfn, i)
-        TMbfn = TMtrj[:-4]  # strip .pdb from end
-        TMbfac = TMbfn + '_b.pdb'
-        TMxvg = TMbfn + '.xvg'
-
-        top = kwargs['topology']
-
-        call = [
-            'g_rmsf',
-            '-s', L[C[i]],
-            '-f', TMtrj,
-            '-ox', TMbfac,
-            '-o', TMxvg,
-            '-fit']
-
-        g_rmsf = subprocess.Popen(call, stdin=subprocess.PIPE)
-        # Pass index group 0 to gromacs
-        g_rmsf.communicate(input='0')
-        g_rmsf.wait()
-        os.remove(TMxvg)
-        os.remove(TMtrj)
-        os.remove(TMbfac)
-
-        copy_connects(top, TMbfac)
-
-        centers.append(TMbfac)
-
-        kwargs['pdb_list'] = centers
-        kwargs['nums'] = pcs
-
-    AffRender(**kwargs)
-
-    comm.Barrier()
+    with open(dst, 'w') as fout:
+        fout.write(''.join(outpdb))
