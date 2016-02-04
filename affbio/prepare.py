@@ -32,7 +32,11 @@ def prepare_cluster_matrix(
 
     #Init RMSD matrix
     #Open matrix file in parallel mode
-    Sf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
+    if NPROCS == 1:
+        Sf = h5py.File(Sfn, 'r+', driver='sec2')
+    else:
+        Sf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
+
     Gn = 'tier%d' % tier
     G = Sf.require_group(Gn)
     #Open table with data for clusterization
