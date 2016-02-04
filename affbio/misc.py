@@ -65,7 +65,6 @@ def cluster_to_trj(
     ind = np.where(I == index)
     frames = L[ind]
 
-    print frames, output
     j = 0
 
     with open(frames[j], 'r') as fin, open(output, 'w') as fout:
