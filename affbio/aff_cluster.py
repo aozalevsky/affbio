@@ -42,8 +42,12 @@ def aff_cluster(
     #Init storage for matrices
     #Get file name
     #Open matrix file in parallel mode
-    Sf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
-    Sf.atomic = True
+    if NPROCS == 1:
+        Sf = h5py.File(Sfn, 'r+', driver='sec2')
+    else:
+        Sf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
+        Sf.atomic = True
+
     Gn = 'tier%d' % tier
     G = Sf.require_group(Gn)
     #Open table with data for clusterization
@@ -195,8 +199,11 @@ def aff_cluster(
     tdR = np.zeros((l,), dtype=ft)
 
     #Shared storage
-    TMf = h5py.File(P.TMfn, 'w', driver='mpio', comm=comm)
-    TMf.atomic = True
+    if NPROCS == 1:
+        TMf = h5py.File(P.TMfn, 'w', driver='sec2')
+    else:
+        TMf = h5py.File(P.TMfn, 'w', driver='mpio', comm=comm)
+        TMf.atomic = True
 
     Rp = TMf.create_dataset('Rp', (N, N), dtype=ft)
     Rps = Rp.id.get_space()
