@@ -24,24 +24,27 @@ def load_pdb_coords(
         pdb_list,
         tier=1,
         topology=None,
+        pbc=True,
+        threshold=10.0,
         mpi=None,
         verbose=False,
         *args, **kwargs):
 
-    def check_pbc(coords, threshold=50):
+    def check_pbc(coords, threshold=10.0):
         for i in range(len(coords) - 1):
             assert np.linalg.norm(coords[i] - coords[i + 1]) < threshold
 
-    def parse_pdb(i):
+    def parse_pdb(i, pbc=True, threshold=10.0):
         """Parse PDB files"""
         ps = prody.parsePDB(i)
         pc = ps.getCoords()
-        check_pbc(pc)
+        if pbc:
+            check_pbc(pc, threshold)
         return pc
 
-    def estimate_pdb_numatoms(topology):
+    def estimate_pdb_numatoms(topology, pbc=True, threshold=10.0):
 
-        pdb_t = parse_pdb(topology)
+        pdb_t = parse_pdb(topology, pbc=pbc, threshold=threshold)
 
         return pdb_t.shape
 
@@ -49,6 +52,8 @@ def load_pdb_coords(
             ftype='pdb',
             pdb_list=None,
             topology=None,
+            pbc=True,
+            threshold=10.0,
             NPROCS=1):
 
         N = len(pdb_list)
@@ -61,7 +66,10 @@ def load_pdb_coords(
         if ftype == 'pdb':
             if not topology:
                 topology = pdb_list[0]
-            na, nc = estimate_pdb_numatoms(topology)
+            na, nc = estimate_pdb_numatoms(
+                topology,
+                pbc=pbc,
+                threshold=threshold)
 
         shape = (N, na, nc)
 
@@ -144,10 +152,13 @@ def load_pdb_coords(
     if rank == 0:
         shape = estimate_coord_shape(
             pdb_list=pdb_list,
-            topology=topology)
+            topology=topology,
+            pbc=pbc,
+            threshold=threshold,
+            NPROCS=NPROCS)
 
         N = shape[0]
-        load_pdb_names(Sfn, pdb_list[:N])
+        load_pdb_names(Sfn, pdb_list[:N], topology=topology)
 
     shape = comm.bcast(shape)
     N = shape[0]
@@ -155,7 +166,11 @@ def load_pdb_coords(
 
     #Init storage for matrices
     #HDF5 file
-    Sf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
+    if NPROCS == 1:
+        Sf = h5py.File(Sfn, 'r+', driver='sec2')
+    else:
+        Sf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
+
     #Table for RMSD
     Gn = 'tier%d' % tier
     G = Sf.require_group(Gn)
@@ -174,7 +189,7 @@ def load_pdb_coords(
 
     for i in range(tb, te):
         try:
-            tS = parse_pdb(pdb_list[i])
+            tS = parse_pdb(pdb_list[i], pbc=pbc, threshold=threshold)
             if verbose:
                 print 'Parsed %s' % pdb_list[i]
         except:
@@ -240,7 +255,11 @@ def calc_rmsd_matrix(
     comm, NPROCS, rank = mpi
 
     #Reread structures by every process
-    Sf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
+    if NPROCS == 1:
+        Sf = h5py.File(Sfn, 'r+', driver='sec2')
+    else:
+        Sf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
+
     Gn = 'tier%d' % tier
     G = Sf.require_group(Gn)
     S = G['struct']
