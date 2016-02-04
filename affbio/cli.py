@@ -67,6 +67,19 @@ def get_args(choices):
                           dest='topology',
                           help='Topology PDB file')
 
+    load_pdb.add_argument('--nopbc',
+                          action='store_false',
+                          dest='pbc',
+                          help='Do not check for PBC artifacts')
+
+    load_pdb.add_argument('--pbc_threshold',
+                          type=float,
+                          dest='threshold',
+                          metavar='THRESHOLD',
+                          default=10.0,
+                          help='Threshold in Angstroms to check PBC \
+                          artifacts. Default is 10.0 A')
+
     preference = parser.add_argument_group('calculate_preference')
 
     preference.add_argument('--factor',
