@@ -7,20 +7,12 @@ from os import path
 from setuptools.extension import Extension
 from Cython.Build import cythonize
 
-import pypandoc
-
 here = path.abspath(path.dirname(__file__))
 
 # Get the long description from the README file
 
-long_description = pypandoc.convert('README.md', 'rst')
-
-try:
-    description = pypandoc.convert('README.md', 'rst')
-except (IOError, ImportError):
-    description = open('README.md').read()
-
-long_description = description
+with open('README.rst', 'r') as f:
+    long_description = f.read()
 
 extensions = [
     Extension(
@@ -87,8 +79,14 @@ setup(
     # requirements files see:
     # https://packaging.python.org/en/latest/requirements.html
     install_requires=[
+        'psutil',
+        'cython',
         'bottleneck',
-        'psutil'],
+        'numpy',
+        'prody',
+        'pyRMSD',
+        'h5py',
+        'mpi4py'],
 
     ext_modules=cythonize(extensions),
 
