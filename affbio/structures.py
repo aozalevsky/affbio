@@ -1,23 +1,24 @@
-#General modules
+# General modules
 import glob
 import time
 
-#H5PY for storage
+# H5PY for storage
 import h5py
 from h5py import h5s
 
-#NumPy
+# NumPy
 import numpy as np
 
-#pyRMSD for calculations
+# pyRMSD for calculations
 import prody
 
-#pyRMSD for calculations
+# pyRMSD for calculations
 import pyRMSD.RMSDCalculator
 from pyRMSD import condensedMatrix
 
 from .utils import task
 
+from natsort import natsorted, ns
 
 def load_pdb_coords(
         Sfn,
@@ -61,7 +62,7 @@ def load_pdb_coords(
 
         if r > 0:
             N = N - r
-            print 'Truncating number to %d to fit %s procs' % (N, NPROCS)
+            print('Truncating number to %d to fit %s procs' % (N, NPROCS))
 
         if ftype == 'pdb':
             if not topology:
@@ -146,6 +147,7 @@ def load_pdb_coords(
         ptrn = pdb_list[0]
         if '*' in ptrn or '?' in ptrn:
             pdb_list = glob.glob(ptrn)
+            pdb_list = natsorted(pdb_list)
 
     shape = None
 
@@ -164,14 +166,14 @@ def load_pdb_coords(
     N = shape[0]
     chunk = (1,) + shape[1:]
 
-    #Init storage for matrices
-    #HDF5 file
+    # Init storage for matrices
+    # HDF5 file
     if NPROCS == 1:
         Sf = h5py.File(Sfn, 'r+', driver='sec2')
     else:
         Sf = h5py.File(Sfn, 'r+', driver='mpio', comm=comm)
 
-    #Table for RMSD
+    # Table for RMSD
     Gn = 'tier%d' % tier
     G = Sf.require_group(Gn)
     S = G.require_dataset(
@@ -191,14 +193,14 @@ def load_pdb_coords(
         try:
             tS = parse_pdb(pdb_list[i], pbc=pbc, threshold=threshold)
             if verbose:
-                print 'Parsed %s' % pdb_list[i]
+                print('Parsed %s' % pdb_list[i])
         except:
             raise ValueError('Broken structure %s' % pdb_list[i])
 
         Ss.select_hyperslab((i, 0, 0), chunk)
         S.id.write(ms, Ss, tS)
 
-    #Wait for all processes
+    # Wait for all processes
     comm.Barrier()
 
     Sf.close()
@@ -234,13 +236,13 @@ def calc_rmsd_matrix(
             tS[i] = calculator.oneVsFollowing(0)
 
     def partition(N, NPROCS, rank):
-        #Partiotioning
+        # Partiotioning
         l = N // NPROCS
         lr = N % NPROCS
 
         if lr > 0 and rank == 0:
-            print 'Truncating matrix to %dx%d to fit %d procs' \
-                % (l * NPROCS, l * NPROCS, NPROCS)
+            print('Truncating matrix to %dx%d to fit %d procs' % (
+                    l * NPROCS, l * NPROCS, NPROCS))
 
         lN = (NPROCS + 1) * NPROCS / 2
 
@@ -254,7 +256,7 @@ def calc_rmsd_matrix(
 
     comm, NPROCS, rank = mpi
 
-    #Reread structures by every process
+    # Reread structures by every process
     if NPROCS == 1:
         Sf = h5py.File(Sfn, 'r+', driver='sec2')
     else:
@@ -263,13 +265,13 @@ def calc_rmsd_matrix(
     Gn = 'tier%d' % tier
     G = Sf.require_group(Gn)
     S = G['struct']
-    #Count number of structures
+    # Count number of structures
     N = S.len()
 
     l, m = partition(N, NPROCS, rank)
 
-    #HDF5 file
-    #Table for RMSD
+    # HDF5 file
+    # Table for RMSD
     RM = G.require_dataset(
         'rmsd',
         (N, N),
@@ -278,7 +280,7 @@ def calc_rmsd_matrix(
     RM.attrs['chunk'] = l
     RMs = RM.id.get_space()
 
-    #Init calculations
+    # Init calculations
     tS = np.zeros((l, l), dtype=np.float32)
     ms = h5s.create_simple((l, l))
 
@@ -301,7 +303,7 @@ def calc_rmsd_matrix(
         if rank == 0:
             teit = time.time()
             if verbose:
-                print "Step %d of %d T %s" % (c, m, teit - tit)
+                print("Step %d of %d T %s" % (c, m, teit - tit))
 
         # Dark magic of task assingment
 
@@ -315,9 +317,9 @@ def calc_rmsd_matrix(
             j = j + 1
             jc = S[j * l: (j + 1) * l]
 
-    #Wait for all processes
+    # Wait for all processes
     comm.Barrier()
 
-    #Cleanup
-    #Close matrix file
+    # Cleanup
+    # Close matrix file
     Sf.close()

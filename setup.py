@@ -86,7 +86,8 @@ setup(
         'prody',
         'pyRMSD',
         'h5py',
-        'mpi4py'],
+        'mpi4py',
+        'natsort'],
 
     ext_modules=cythonize(extensions),
 
