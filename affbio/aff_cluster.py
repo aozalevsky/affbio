@@ -1,4 +1,4 @@
-#General modules
+# General modules
 import os
 import time
 import uuid
@@ -7,14 +7,14 @@ import psutil
 import tempfile
 from os.path import join as osp
 
-#NumPy for arrays
+# NumPy for arrays
 import numpy as np
 import bottleneck as bn
 
-#MPI parallelism
+# MPI parallelism
 from mpi4py import MPI
 
-#H5PY for storage
+# H5PY for storage
 import h5py
 from h5py import h5s
 
@@ -39,9 +39,9 @@ def aff_cluster(
     else:
         NPROCS_LOCAL = 1
 
-    #Init storage for matrices
-    #Get file name
-    #Open matrix file in parallel mode
+    # Init storage for matrices
+    # Get file name
+    # Open matrix file in parallel mode
     if NPROCS == 1:
         Sf = h5py.File(Sfn, 'r+', driver='sec2')
     else:
@@ -50,7 +50,7 @@ def aff_cluster(
 
     Gn = 'tier%d' % tier
     G = Sf.require_group(Gn)
-    #Open table with data for clusterization
+    # Open table with data for clusterization
     SS = G['cluster']
     SSs = SS.id.get_space()
 
@@ -138,7 +138,7 @@ def aff_cluster(
                 assert cache < l
             except:
                 cache = tl
-                #print 'Wrong cache settings, set cache to %d' % tl
+                # print 'Wrong cache settings, set cache to %d' % tl
             tl = adjust_cache(tl, l)
             P.l = l
             P.ll = tl
@@ -178,8 +178,8 @@ def aff_cluster(
         S = TMLf.create_dataset('S', (l, N), dtype=ft)
         Ss = S.id.get_space()
 
-    #Copy input data and
-    #place preference on diagonal
+    # Copy input data and
+    # place preference on diagonal
     z = - np.finfo(ft).max
 
     for i in range(tb, te, ll):
@@ -198,7 +198,7 @@ def aff_cluster(
     tR = np.zeros((ll, N), dtype=ft)
     tdR = np.zeros((l,), dtype=ft)
 
-    #Shared storage
+    # Shared storage
     if NPROCS == 1:
         TMf = h5py.File(P.TMfn, 'w', driver='sec2')
     else:
@@ -241,7 +241,7 @@ def aff_cluster(
                 il = i - tb
                 Ss.select_hyperslab((il, 0), (ll, N))
                 S.id.read(ms, Ss, tS)
-            #tS = S[i, :]
+            # tS = S[i, :]
                 Rs.select_hyperslab((il, 0), (ll, N))
                 R.id.read(ms, Rs, tRold)
             else:
@@ -249,9 +249,9 @@ def aff_cluster(
 
             As.select_hyperslab((i, 0), (ll, N))
             A.id.read(ms, As, tAS)
-            #Tas = a[I, :]
+            # Tas = a[I, :]
             tAS += tS
-            #tRold = R[i, :]
+            # tRold = R[i, :]
 
             tI = bn.nanargmax(tAS, axis=1)
             tY = tAS[ind, tI]
@@ -270,12 +270,12 @@ def aff_cluster(
 
             if disk is True:
                 R.id.write(ms, Rs, tR)
-                #R[i, :] = tR
+                # R[i, :] = tR
 
             Rps.select_hyperslab((i, 0), (ll, N))
             Rp.id.write(ms, Rps, tRp)
 
-                #Rp[i, :] = tRp
+                # Rp[i, :] = tRp
         if rank == 0:
             if verbose is True:
                 teit1 = time.time()
@@ -295,7 +295,7 @@ def aff_cluster(
 
             Rps.select_hyperslab((0, j), (N, ll))
             Rp.id.read(ms, Rps, tRpa)
-            #tRp = Rp[:, j]
+            # tRp = Rp[:, j]
 
             tA = bn.nansum(tRpa, axis=0)[np.newaxis, :] - tRpa
             for jl in range(ll):
@@ -434,7 +434,7 @@ def aff_cluster(
             I = np.zeros(())
             C = np.zeros(())
 
-    #Cleanup
+    # Cleanup
     Sf.close()
     TMf.close()
 
@@ -471,18 +471,18 @@ def aff_cluster(
                 PGn = 'tier%d' % (tier - 1)
                 PG = Sf.require_group(PGn)
                 PL = PG['aff_labels'][:]
-                L = PL[:]
+                NL = PL[:]
 
                 for i in range(len(C)):
                     ind = np.where(PL == i)
-                    L[ind] = C[i]
+                    NL[ind] = C[i]
 
                 LM = G.require_dataset(
                     'aff_labels_merged',
                     shape=PL.shape,
                     dtype=np.int)
 
-                LM[:] = L[:]
+                LM[:] = NL[:]
 
             if 'aff_centers' in G.keys():
                 del G['aff_centers']
@@ -517,16 +517,18 @@ def print_stat(
     NC = C.len()
 
     I = G['aff_labels']
-    L = G['labels']
 
+    LC = G['labels']
+    L = G['labels']
     if tier > 1 and merged:
+        print 'MODMODMOD'
         I = G['aff_labels_merged']
         L = Sf['tier1']['labels']
     NI = I.len()
 
     with open('aff_centers.out', 'w') as f:
         for i in range(NC):
-            f.write("%s\t%d\n" % (L[C[i]], i))
+            f.write("%s\t%d\n" % (LC[C[i]], i))
 
     with open('aff_labels.out', 'w') as f:
         for i in range(NI):
@@ -542,4 +544,4 @@ def print_stat(
         f.write('INDEX CENTER SIZE PERCENTAGE\n')
 
         for i in range(NC):
-            f.write("%d\t%s\t%d\t%.3f\n" % (i, L[C[i]], cs[i], pcs[i]))
+            f.write("%d\t%s\t%d\t%.3f\n" % (i, LC[C[i]], cs[i], pcs[i]))
