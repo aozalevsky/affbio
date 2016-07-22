@@ -169,17 +169,21 @@ def calc_median(
         raise ValueError(
             "Wrong chunk size in RMSD matrix")
 
+
+    if N * N1 > 10000:
     #Init calculations
-    #med = livestats.LiveStats()
-    med = lvc.Quantile(0.5)
+        #med = livestats.LiveStats()
+        med = lvc.Quantile(0.5)
 
-    for i in range(N):
-        #CMs.select_hyperslab((i, 0), (1, i - 1))
-        #CM.id.read(ms, CMs, tCM)
-        med.add(CM[i, :i])
+        for i in range(N):
+            #CMs.select_hyperslab((i, 0), (1, i - 1))
+            #CM.id.read(ms, CMs, tCM)
+            med.add(CM[i, :i])
 
-    #level, median = med.quantiles()[0]
-    median = med.quantile()
+        #level, median = med.quantiles()[0]
+        median = med.quantile()
+    else:
+        median = np.median(CM[:])
 
     if verbose:
         print 'Median: %f' % median
