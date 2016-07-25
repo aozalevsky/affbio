@@ -1,15 +1,15 @@
 #!/usr/bin/python
 
-#General modules
+# General modules
 import os
 import re
 import uuid
 import subprocess
 
-#NumPy for arrays
+# NumPy for arrays
 import numpy as np
 
-#H5PY for storage
+# H5PY for storage
 import h5py
 
 from .AffRender import AffRender
@@ -83,14 +83,14 @@ def render_b_factor(
     C = G['aff_centers'][:]
     NC = len(C)
 
+    I = G['aff_labels'][:]
+    L = G['labels'][:]
+
     if tier > 1 and merged:
         I = G['aff_labels_merged'][:]
-    else:
-        I = G['aff_labels'][:]
+        L = Sf['tier1']['labels']
 
     NI = len(I)
-
-    L = G['labels'][:]
 
     cs = np.bincount(I)
     pcs = cs * 100.0 / NI
