@@ -471,7 +471,7 @@ def aff_cluster(
                 PGn = 'tier%d' % (tier - 1)
                 PG = Sf.require_group(PGn)
                 PL = PG['aff_labels'][:]
-                NL = PL[:]
+                NL = np.copy(PL)
 
                 for i in range(len(C)):
                     ind = np.where(PL == i)
