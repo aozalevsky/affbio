@@ -35,11 +35,10 @@ def cluster_to_trj(
     Gn = 'tier%d' % tier
     G = Sf.require_group(Gn)
 
+    L = G['labels'][:]
     if tier > 1 and merged:
         I = G['aff_labels_merged'][:]
-        L = Sf['tier1']['labels'][:]
     else:
-        L = G['labels'][:]
         I = G['aff_labels'][:]
 
     ind = np.where(I == index)
@@ -83,12 +82,11 @@ def render_b_factor(
     C = G['aff_centers'][:]
     NC = len(C)
 
-    I = G['aff_labels'][:]
-    L = G['labels'][:]
+    I = G['aff_labels']
+    L = G['labels']
 
     if tier > 1 and merged:
         I = G['aff_labels_merged'][:]
-        L = Sf['tier1']['labels']
 
     NI = len(I)
 
