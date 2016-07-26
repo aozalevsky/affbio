@@ -35,11 +35,12 @@ def cluster_to_trj(
     Gn = 'tier%d' % tier
     G = Sf.require_group(Gn)
 
-    L = G['labels'][:]
     if tier > 1 and merged:
         I = G['aff_labels_merged'][:]
+        L = Sf['tier1']['labels']
     else:
         I = G['aff_labels'][:]
+        L = G['labels'][:]
 
     ind = np.where(I == index)
     frames = L[ind]
@@ -79,14 +80,14 @@ def render_b_factor(
     Gn = 'tier%d' % tier
     G = Sf.require_group(Gn)
 
-    C = G['aff_centers'][:]
+    C = G['aff_centers']
     NC = len(C)
 
-    I = G['aff_labels']
-    L = G['labels']
+    LC = G['labels']
 
+    I = G['aff_labels']
     if tier > 1 and merged:
-        I = G['aff_labels_merged'][:]
+        I = G['aff_labels_merged']
 
     NI = len(I)
 
@@ -109,9 +110,9 @@ def render_b_factor(
 
         call = [
             'g_rmsf',
-            '-s', L[C[i]],
+            '-s', LC[C[i]],
             '-f', TMtrj,
-            '-ox', TMbfac,
+            '-oq', TMbfac,
             '-o', TMxvg,
             '-fit']
 
@@ -125,8 +126,8 @@ def render_b_factor(
         copy_connects(top, TMbfac)
         centers.append(TMbfac)
 
-        kwargs['pdb_list'] = centers
-        kwargs['nums'] = pcs
+    kwargs['pdb_list'] = centers
+    kwargs['nums'] = pcs
 
     AffRender(**kwargs)
 
