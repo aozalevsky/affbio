@@ -275,7 +275,7 @@ def aff_cluster(
             Rps.select_hyperslab((i, 0), (ll, N))
             Rp.id.write(ms, Rps, tRp)
 
-                # Rp[i, :] = tRp
+            # Rp[i, :] = tRp
         if rank == 0:
             if verbose is True:
                 teit1 = time.time()
@@ -521,7 +521,6 @@ def print_stat(
     LC = G['labels']
     L = G['labels']
     if tier > 1 and merged:
-        print 'MODMODMOD'
         I = G['aff_labels_merged']
         L = Sf['tier1']['labels']
     NI = I.len()
