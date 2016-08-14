@@ -1,11 +1,12 @@
 #!/usr/bin/python
 
-#General modules
+# General modules
 import argparse as ag
 from collections import OrderedDict as OD
 
 
-from affbio.utils import init_mpi, init_logging, finish_logging, dummy
+from affbio.utils import init_mpi, init_logging, finish_logging, dummy, \
+    init_debug, finish_debug
 from affbio.structures import load_pdb_coords, calc_rmsd_matrix
 from affbio.prepare import prepare_cluster_matrix, calc_median, set_preference
 from affbio.aff_cluster import aff_cluster, print_stat
@@ -214,18 +215,10 @@ def run_task(task, args):
 
     comm, NPROCS, rank = args['mpi']
 
-    #Init logging
+    # Init logging
     if rank == 0:
         t0 = init_logging(task, args['verbose'])
-
-        if args['debug'] is True:
-
-            import cProfile
-            import pstats
-            import StringIO
-
-            pr = cProfile.Profile()
-            pr.enable()
+        pr = init_debug(args['debug'])
 
     tasks = main_tasks()
     tasks.update(misc_tasks())
@@ -234,14 +227,7 @@ def run_task(task, args):
 
     if rank == 0:
         finish_logging(task, t0, args['verbose'])
-
-        if args['debug'] is True:
-            pr.disable()
-            s = StringIO.StringIO()
-            sortby = 'tottime'
-            ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-            ps.print_stats()
-            print s.getvalue()
+        finish_debug(pr, args['debug'])
 
     comm.Barrier()
 

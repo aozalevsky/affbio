@@ -1,7 +1,11 @@
-#General modules
+# General modules
 import time
+import cProfile
+import pstats
+import StringIO
 
-#MPI parallelism
+
+# MPI parallelism
 from mpi4py import MPI
 
 
@@ -10,11 +14,11 @@ def dummy(*args, **kwargs):
 
 
 def init_mpi():
-    #Get MPI info
+    # Get MPI info
     comm = MPI.COMM_WORLD
-    #Get number of processes
+    # Get number of processes
     NPROCS = comm.size
-    #Get rank
+    # Get rank
     rank = comm.rank
 
     return (comm, NPROCS, rank)
@@ -30,6 +34,7 @@ def master(fn):
 
 
 class Bunch(object):
+
     def __init__(self, adict):
         self.__dict__.update(adict)
 
@@ -45,7 +50,7 @@ def init_logging(task, verbose=False):
 
         print 'Starting task: %s' % task
 
-    #Get current time
+    # Get current time
     t0 = time.time()
 
     return t0
@@ -54,3 +59,23 @@ def init_logging(task, verbose=False):
 def finish_logging(task, t0, verbose=False):
     if verbose:
         print "Task: %s execution time is %f" % (task, time.time() - t0)
+
+
+def init_debug(debug=False):
+    if debug is True:
+        pr = cProfile.Profile()
+        pr.enable()
+    else:
+        pr = None
+    return pr
+
+
+def finish_debug(pr, debug=False):
+    if debug is True:
+        pr.disable()
+        s = StringIO.StringIO()
+        sortby = 'time'
+        ps = pstats.Stats(pr, stream=s)
+        ps.sort_stats(sortby)
+        ps.print_stats()
+        print s.getvalue()
