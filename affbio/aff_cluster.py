@@ -89,7 +89,7 @@ def aff_cluster(
             raise ValueError('conv_iter must lie in \
                 interval between 0 and max_iter')
 
-        if damping < 0.5 or damping >= 1:
+        if damping < 0.5 or damping >= 1.0:
             raise ValueError('damping must lie in interval between 0.5 and 1')
 
         print '#' * 10, 'Main params', '#' * 10
@@ -230,11 +230,14 @@ def aff_cluster(
 
     comm.Barrier()
 
+
+    # Starting clustering
     for it in range(max_iter):
         if rank == 0:
             if verbose is True:
                 print '=' * 10 + 'It %d' % (it) + '=' * 10
                 tit = time.time()
+
         # Compute responsibilities
         for i in range(tb, te, ll):
             if disk is True:
@@ -247,8 +250,12 @@ def aff_cluster(
             else:
                 tRold = tR.copy()
 
-            As.select_hyperslab((i, 0), (ll, N))
-            A.id.read(ms, As, tAS)
+            if NPROCS > 1:
+                As.select_hyperslab((i, 0), (ll, N))
+                A.id.read(ms, As, tAS)
+            else:
+                tAS = tA.copy()
+
             # Tas = a[I, :]
             tAS += tS
             # tRold = R[i, :]
@@ -264,16 +271,16 @@ def aff_cluster(
 
             tRp = np.maximum(tR, 0)
 
-            for il in range(ll):
-                tRp[il, i + il] = tR[il, i + il]
-                tdR[i - tb + il] = tR[il, i + il]
+            tRp[:ll, i:i + ll].flat[::ll + 1] = tR[:ll, i:i + ll].flat[::ll + 1]
+            tdR[i - tb: i - tb + ll] = tR[:ll, i:i + ll].flat[::ll + 1]
 
             if disk is True:
                 R.id.write(ms, Rs, tR)
                 # R[i, :] = tR
 
-            Rps.select_hyperslab((i, 0), (ll, N))
-            Rp.id.write(ms, Rps, tRp)
+            if NPROCS > 1:
+                Rps.select_hyperslab((i, 0), (ll, N))
+                Rp.id.write(ms, Rps, tRp)
 
             # Rp[i, :] = tRp
         if rank == 0:
@@ -286,34 +293,37 @@ def aff_cluster(
         # Compute availabilities
         for j in range(tb, te, ll):
 
-            As.select_hyperslab((0, j), (N, ll))
+            if NPROCS > 1 or disk is True:
+                As.select_hyperslab((0, j), (N, ll))
 
             if disk is True:
                 A.id.read(ms, As, tAold)
             else:
                 tAold = tA.copy()
 
-            Rps.select_hyperslab((0, j), (N, ll))
-            Rp.id.read(ms, Rps, tRpa)
+            if NPROCS > 1:
+                Rps.select_hyperslab((0, j), (N, ll))
+                Rp.id.read(ms, Rps, tRpa)
+            else:
+                tRpa = tRp.copy()
             # tRp = Rp[:, j]
 
             tA = bn.nansum(tRpa, axis=0)[np.newaxis, :] - tRpa
-            for jl in range(ll):
-                tdA[j - tb + jl] = tA[j + jl, jl]
+            tdA[j - tb: j - tb + ll] = tA[j: j + ll, :ll].flat[::ll + 1]
 
             tA = np.minimum(tA, 0)
 
-            for jl in range(ll):
-                tA[j + jl, jl] = tdA[j - tb + jl]
+            tA[j:j + ll, :ll].flat[::ll + 1] = tdA[j - tb: j - tb + ll]
 
-            tA *= (1 - damping)
+            tA *= (1.0 - damping)
 
             tA += damping * tAold
 
             for jl in range(ll):
                 tdA[j - tb + jl] = tA[j + jl, jl]
 
-            A.id.write(ms, As, tA)
+            if NPROCS > 1:
+                A.id.write(ms, As, tA)
 
         if rank == 0:
             if verbose is True:
@@ -390,24 +400,29 @@ def aff_cluster(
         comm.Bcast([C, MPI.INT])
 
         for k in range(K):
-            ii = np.where(C == k)[0]
-            tN = ii.shape[0]
+            if NPROCS > 1:
+                ii = np.where(C == k)[0]
+                tN = ii.shape[0]
 
-            tI = np.zeros((tN, ), dtype=np.float32)
-            ttI = np.zeros((tN, ), dtype=np.float32)
-            tttI = np.zeros((tN, ), dtype=np.float32)
-            ms_k = h5s.create_simple((tN,))
+                tI = np.zeros((tN, ), dtype=np.float32)
+                ttI = np.zeros((tN, ), dtype=np.float32)
+                tttI = np.zeros((tN, ), dtype=np.float32)
+                ms_k = h5s.create_simple((tN,))
 
-            j = rank
-            while j < tN:
-                ind = [(ii[i], ii[j]) for i in range(tN)]
-                SSs.select_elements(ind)
-                SS.id.read(ms_k, SSs, tttI)
+                j = rank
+                while j < tN:
+                    ind = [(ii[i], ii[j]) for i in range(tN)]
+                    SSs.select_elements(ind)
+                    SS.id.read(ms_k, SSs, tttI)
 
-                ttI[j] = bn.nansum(tttI)
-                j += NPROCS
+                    ttI[j] = bn.nansum(tttI)
+                    j += NPROCS
 
-            comm.Reduce([ttI, MPI.FLOAT], [tI, MPI.FLOAT])
+                comm.Reduce([ttI, MPI.FLOAT], [tI, MPI.FLOAT])
+
+            else:
+                ii = np.where(C == k)[0]
+                tI = bn.nansum(tS[ii[:, np.newaxis], ii], axis=0)
 
             if rank == 0:
                 I[k] = ii[bn.nanargmax(tI)]
