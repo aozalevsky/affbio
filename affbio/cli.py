@@ -20,8 +20,6 @@
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 
-#!/usr/bin/python
-
 # General modules
 import argparse as ag
 from collections import OrderedDict as OD
@@ -154,6 +152,10 @@ def get_args(choices):
                         action='store_true',
                         help='Draw numerical labels')
 
+    render.add_argument('--bcolor',
+                        action='store_true',
+                        help='Color according to computed bfactors')
+
     render.add_argument('--noclear',
                         dest='clear',
                         action='store_false',
@@ -204,7 +206,7 @@ def main_tasks():
 def misc_tasks():
     tasks = OD([
         ('cluster_to_trj', cluster_to_trj),
-        ('render_results', render_b_factor)])
+        ('render', render_b_factor)])
     return tasks
 
 

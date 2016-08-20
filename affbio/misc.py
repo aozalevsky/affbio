@@ -23,7 +23,7 @@
 # General modules
 import os
 import re
-import uuid
+# import uuid
 import subprocess
 
 # NumPy for arrays
@@ -118,14 +118,15 @@ def render_b_factor(
 
     for i in range(NC):
 
-        TMbfn = str(uuid.uuid1())
-        TMtrj = TMbfn + '.pdb'
+        # TMbfn = str(uuid.uuid1())
+        TMbfn = str('cluster_%d' % i)
+        TMtrj = TMbfn + '_trj.pdb'
         cluster_to_trj(Sfn,
                        index=i,
                        merged=merged,
                        output=TMtrj,
                        mpi=mpi)
-        TMbfac = TMbfn + '_b.pdb'
+        TMbfac = TMbfn + '_bfac.pdb'
         TMxvg = TMbfn + '.xvg'
 
         call = [

@@ -20,8 +20,7 @@
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA.
 #
 
-#!/usr/bin/python
-#-*- coding: UTF-8 -*-
+# -*- coding: UTF-8 -*-
 
 import os
 import re
@@ -29,6 +28,7 @@ import subprocess
 
 
 class AffRender(object):
+
     def __init__(
             self,
             pdb_list=None,
@@ -36,6 +36,7 @@ class AffRender(object):
             nums=list(),
             draw_nums=False,
             guess_nums=False,
+            bcolor=False,
             lowt=10,
             width=640, height=480,
             moltype="general",
@@ -57,6 +58,8 @@ class AffRender(object):
             if len(self.nums) != len(self.models):
                 raise(Exception("Numbers of models and nums are different"))
 
+        self.bcolor = False
+
         self.width = width
         self.height = height
 
@@ -65,7 +68,15 @@ class AffRender(object):
         self.clear = clear
 
         self.pymol = self.init_pymol()
+
         self.process_models()
+
+        if bcolor is True:
+            self.bcolor = bcolor
+            filename, file_extension = os.path.splitext(self.out)
+            self.out = filename + '_color.png'
+            self.process_models()
+
 
     @staticmethod
     def init_pymol():
@@ -85,6 +96,7 @@ class AffRender(object):
         self.pymol.cmd.set("reflect_power", '0.10000')
         self.pymol.cmd.set("spec_power", '0.00000')
         self.pymol.cmd.set("specular", '0.00000')
+        self.pymol.cmd.set("orthoscopic", 1)
 
         self.pymol.cmd.bg_color("white")
 
@@ -106,7 +118,7 @@ class AffRender(object):
 
         subprocess.call(call)
 
-    ### DNA origami specific part ###
+    # DNA origami specific part ###
 
     @staticmethod
     def is_backbone(i, j):
@@ -118,12 +130,12 @@ class AffRender(object):
 
     def draw_backbone(self):
         # Get total number of atoms
-    #    N = self.pymol.cmd.count_atoms()
+        # N = self.pymol.cmd.count_atoms()
 
         # Show backbone with sticks
-    #    for i in range(1, N):
-    #        self.pymol.cmd.select('bck', 'resi %d+%d' % (i, i + 1))
-    #        self.pymol.cmd.show('sticks', 'bck')
+        # for i in range(1, N):
+        #   self.pymol.cmd.select('bck', 'resi %d+%d' % (i, i + 1))
+        #   self.pymol.cmd.show('sticks', 'bck')
 
         # Set sticks width
         self.pymol.cmd.show("sticks")
@@ -146,8 +158,10 @@ class AffRender(object):
                         "stick_radius", 0.5,
                         "i. %d" % i, "i. %d" % j)
 
+        self.pymol.cmd.color('black')
         # Color bacbone according to B-factors
-        self.pymol.cmd.spectrum("b")
+        if self.bcolor is True:
+            self.pymol.cmd.spectrum("b")
 
     def draw_crossovers(self, fname):
         """ Read all CONECT from model file and draw all non-backbone
@@ -190,12 +204,12 @@ class AffRender(object):
     def draw_nucleic_acid(self):
         self.pymol.cmd.hide("everything")
         self.pymol.cmd.show("lines")
-        #self.pymol.cmd.show("cartoon")
-        #self.pymol.cmd.set("cartoon_nucleic_acid_mode", 1)
-        #self.pymol.cmd.set("cartoon_tube_radius", 0.1)
-        #self.pymol.cmd.set("cartoon_ring_finder", 2)
-        #self.pymol.cmd.set("cartoon_ring_mode", 2)
-        #self.pymol.cmd.set("cartoon_flat_sheets", 0)
+        # self.pymol.cmd.show("cartoon")
+        # self.pymol.cmd.set("cartoon_nucleic_acid_mode", 1)
+        # self.pymol.cmd.set("cartoon_tube_radius", 0.1)
+        # self.pymol.cmd.set("cartoon_ring_finder", 2)
+        # self.pymol.cmd.set("cartoon_ring_mode", 2)
+        # self.pymol.cmd.set("cartoon_flat_sheets", 0)
 
         # Color bacbone according to B-factors
         self.pymol.cmd.spectrum("b")
@@ -225,14 +239,14 @@ class AffRender(object):
         return name
 
     def ray(self, name, width=640, height=480):
-        #pymol.cmd.zoom("all", 100)
+        # pymol.cmd.zoom("all", 100)
         self.pymol.cmd.zoom("all", 20)
         self.pymol.cmd.ray(width, height)
         self.pymol.cmd.save(name)
 
     @staticmethod
     def gen_name(basename, number):
-        return basename + '_' + str(number) + '_' + '.png'
+        return "%s_%d.png" % (basename, number)
 
     def ray_poses(self, basename="gg", width=640, height=480):
 
@@ -259,8 +273,11 @@ class AffRender(object):
 
         model = self.models[index]
 
-        #basename = model.replace('.pdb', '.png')
+        # basename = model.replace('.pdb', '.png')
         basename = model[:-4] + '_tmp'
+
+        if self.bcolor:
+            basename += '_color'
 
         self.pymol.cmd.reinitialize()
         # Desired pymol commands here to produce and save figures
