@@ -98,7 +98,8 @@ class AffRender(object):
         self.pymol.cmd.set("specular", '0.00000')
         self.pymol.cmd.set("orthoscopic", 1)
 
-        self.pymol.cmd.bg_color("white")
+        # self.pymol.cmd.bg_color("white")
+        self.pymol.cmd.set("opaque_background", 0)
 
     @staticmethod
     def tile(images, out, direction="h"):
