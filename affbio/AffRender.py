@@ -90,7 +90,6 @@ class AffRender(object):
         self.pymol.cmd.set("ambient", '0.00000')
         self.pymol.cmd.set("antialias", 4)
         self.pymol.cmd.set("light_count", 1)
-        self.pymol.cmd.set("ray_opaque_background", 0)
         self.pymol.cmd.set("ray_shadow", 'off')
         self.pymol.cmd.set("reflect_power", '0.10000')
         self.pymol.cmd.set("spec_power", '0.00000')
@@ -112,6 +111,7 @@ class AffRender(object):
         call = [
             'montage',
             '-mode', 'Concatenate',
+            '-background', 'none',
             '-tile', tile_format]
         call.extend(images)
         call.append(out)
@@ -218,17 +218,19 @@ class AffRender(object):
     def gen_label(self, basename="gg", num=100, width=640, height=480):
 
         lwidth = int(0.2 * width)  # 20% - empirically
-        border = int(0.05 * lwidth)  # Border is 5% of label width
+#        border = int(0.05 * lwidth)  # Border is 5% of label width
 
         name = self.gen_name(basename, 0)
 
         call = [
             "convert",
-            "-background", "white",
-            "-bordercolor", "white",
+            "-transparent", "white",
+            # "-background", "white",
+            # "-bordercolor", "white",
             "-size",
-            "%dx%d" % (lwidth - 2 * border, height - 2 * border),
-            "-border", "%d" % border,
+            # "%dx%d" % (lwidth - 2 * border, height - 2 * border),
+            "%dx%d" % (lwidth, height),
+            # "-border", "%d" % border,
             "-gravity", "East",
             "-pointsize", "%d" % int(lwidth / 3),
             "caption:%d%%" % num,
