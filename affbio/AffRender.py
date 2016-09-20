@@ -77,7 +77,6 @@ class AffRender(object):
             self.out = filename + '_color.png'
             self.process_models()
 
-
     @staticmethod
     def init_pymol():
         import __main__
@@ -91,7 +90,6 @@ class AffRender(object):
         self.pymol.cmd.set("ambient", '0.00000')
         self.pymol.cmd.set("antialias", 4)
         self.pymol.cmd.set("light_count", 1)
-        self.pymol.cmd.set("ray_opaque_background", 1)
         self.pymol.cmd.set("ray_shadow", 'off')
         self.pymol.cmd.set("reflect_power", '0.10000')
         self.pymol.cmd.set("spec_power", '0.00000')
@@ -113,6 +111,7 @@ class AffRender(object):
         call = [
             'montage',
             '-mode', 'Concatenate',
+            '-background', 'none',
             '-tile', tile_format]
         call.extend(images)
         call.append(out)
@@ -219,17 +218,19 @@ class AffRender(object):
     def gen_label(self, basename="gg", num=100, width=640, height=480):
 
         lwidth = int(0.2 * width)  # 20% - empirically
-        border = int(0.05 * lwidth)  # Border is 5% of label width
+#        border = int(0.05 * lwidth)  # Border is 5% of label width
 
         name = self.gen_name(basename, 0)
 
         call = [
             "convert",
-            "-background", "white",
-            "-bordercolor", "white",
+            "-transparent", "white",
+            # "-background", "white",
+            # "-bordercolor", "white",
             "-size",
-            "%dx%d" % (lwidth - 2 * border, height - 2 * border),
-            "-border", "%d" % border,
+            # "%dx%d" % (lwidth - 2 * border, height - 2 * border),
+            "%dx%d" % (lwidth, height),
+            # "-border", "%d" % border,
             "-gravity", "East",
             "-pointsize", "%d" % int(lwidth / 3),
             "caption:%d%%" % num,
@@ -341,61 +342,3 @@ class AffRender(object):
 
         if self.clear:
             map(os.remove, images)
-
-if __name__ == "__main__":
-
-    import argparse as ag
-
-    def get_args():
-        """Parse cli arguments"""
-        parser = ag.ArgumentParser(
-            description='Render affitiny propagation results')
-
-        parser.add_argument('-f', '--files',
-                            nargs='+',
-                            dest='pdb_list',
-                            required=True,
-                            help='PDB file')
-
-        parser.add_argument('-o', '--output',
-                            required=True,
-                            metavar='output.png',
-                            help='Output PNG image')
-
-        parser.add_argument('--nums',
-                            nargs='*', type=int,
-                            help='Values for numerical labels')
-
-        parser.add_argument('--draw_nums',
-                            action='store_true',
-                            help='Draw numerical labels')
-
-        parser.add_argument('--guess_nums',
-                            action='store_true',
-                            help='Guess nums from filenames',
-                            default=False)
-
-        parser.add_argument('--clear',
-                            action='store_true',
-                            help='Clear intermidiate files')
-
-        parser.add_argument('--width',
-                            nargs='?', type=int, default=640,
-                            help='Width of individual image')
-
-        parser.add_argument('--height',
-                            nargs='?', type=int, default=480,
-                            help='Height of individual image')
-
-        parser.add_argument('--moltype',
-                            nargs='?', type=str, default="general",
-                            choices=["general", "origami"],
-                            help='Height of individual image')
-
-        args_dict = parser.parse_args()
-
-        return vars(args_dict)
-
-    args = get_args()
-
-    AffRender(**args)

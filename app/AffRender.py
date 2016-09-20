@@ -1,5 +1,4 @@
-#!/usr/bin/python
-#-*- coding: UTF-8 -*-
+# -*- coding: UTF-8 -*-
 
 import os
 import re
@@ -7,6 +6,7 @@ import subprocess
 
 
 class AffRender(object):
+
     def __init__(
             self,
             pdb_list=None,
@@ -54,7 +54,7 @@ class AffRender(object):
         self.pymol.cmd.set("ambient", '0.00000')
         self.pymol.cmd.set("antialias", 4)
         self.pymol.cmd.set("light_count", 1)
-        self.pymol.cmd.set("ray_opaque_background", 1)
+        self.pymol.cmd.set("ray_opaque_background", 0)
         self.pymol.cmd.set("ray_shadow", 'off')
         self.pymol.cmd.set("reflect_power", '0.10000')
         self.pymol.cmd.set("spec_power", '0.00000')
@@ -80,7 +80,7 @@ class AffRender(object):
 
         subprocess.call(call)
 
-    ### DNA origami specific part ###
+    # DNA origami specific part ###
 
     @staticmethod
     def is_backbone(i, j):
@@ -92,12 +92,12 @@ class AffRender(object):
 
     def draw_backbone(self):
         # Get total number of atoms
-    #    N = self.pymol.cmd.count_atoms()
+        # N = self.pymol.cmd.count_atoms()
 
         # Show backbone with sticks
-    #    for i in range(1, N):
-    #        self.pymol.cmd.select('bck', 'resi %d+%d' % (i, i + 1))
-    #        self.pymol.cmd.show('sticks', 'bck')
+        # for i in range(1, N):
+        #    self.pymol.cmd.select('bck', 'resi %d+%d' % (i, i + 1))
+        #    self.pymol.cmd.show('sticks', 'bck')
 
         # Set sticks width
         self.pymol.cmd.show("sticks")
@@ -198,10 +198,10 @@ class AffRender(object):
         return name
 
     def ray(self, name, width=640, height=480):
-        #ray 3200, 2400
-        #pymol.cmd.png("DDD.png", dpi=1000)
-        #pymol.cmd.ray("3200", "2400")
-        #pymol.cmd.zoom("all", 100)
+        # ray 3200, 2400
+        # pymol.cmd.png("DDD.png", dpi=1000)
+        # pymol.cmd.ray("3200", "2400")
+        # pymol.cmd.zoom("all", 100)
         self.pymol.cmd.zoom("all", 100)
         self.pymol.cmd.ray(width, height)
         self.pymol.cmd.save(name)
@@ -235,7 +235,7 @@ class AffRender(object):
 
         model = self.models[index]
 
-        #basename = model.replace('.pdb', '.png')
+        # basename = model.replace('.pdb', '.png')
         basename = model[:-4] + '_tmp'
 
         self.pymol.cmd.reinitialize()
@@ -299,61 +299,3 @@ class AffRender(object):
 
         if self.clear:
             map(os.remove, images)
-
-if __name__ == "__main__":
-
-    import argparse as ag
-
-    def get_args():
-        """Parse cli arguments"""
-        parser = ag.ArgumentParser(
-            description='Render affitiny propagation results')
-
-        parser.add_argument('-f', '--files',
-                            nargs='+',
-                            dest='pdb_list',
-                            required=True,
-                            help='PDB file')
-
-        parser.add_argument('-o', '--output',
-                            required=True,
-                            metavar='output.png',
-                            help='Output PNG image')
-
-        parser.add_argument('--nums',
-                            nargs='*', type=int,
-                            help='Values for numerical labels')
-
-        parser.add_argument('--draw_nums',
-                            action='store_true',
-                            help='Draw numerical labels')
-
-        parser.add_argument('--guess_nums',
-                            action='store_true',
-                            help='Guess nums from filenames',
-                            default=False)
-
-        parser.add_argument('--clear',
-                            action='store_true',
-                            help='Clear intermidiate files')
-
-        parser.add_argument('--width',
-                            nargs='?', type=int, default=640,
-                            help='Width of individual image')
-
-        parser.add_argument('--height',
-                            nargs='?', type=int, default=480,
-                            help='Height of individual image')
-
-        parser.add_argument('--moltype',
-                            nargs='?', type=str, default="general",
-                            choices=["general", "origami"],
-                            help='Height of individual image')
-
-        args_dict = parser.parse_args()
-
-        return vars(args_dict)
-
-    args = get_args()
-
-    AffRender(**args)
