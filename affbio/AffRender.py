@@ -90,7 +90,7 @@ class AffRender(object):
         self.pymol.cmd.set("ambient", '0.00000')
         self.pymol.cmd.set("antialias", 4)
         self.pymol.cmd.set("light_count", 1)
-        self.pymol.cmd.set("ray_opaque_background", 1)
+        self.pymol.cmd.set("ray_opaque_background", 0)
         self.pymol.cmd.set("ray_shadow", 'off')
         self.pymol.cmd.set("reflect_power", '0.10000')
         self.pymol.cmd.set("spec_power", '0.00000')
