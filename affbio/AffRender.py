@@ -77,7 +77,6 @@ class AffRender(object):
             self.out = filename + '_color.png'
             self.process_models()
 
-
     @staticmethod
     def init_pymol():
         import __main__
@@ -341,61 +340,3 @@ class AffRender(object):
 
         if self.clear:
             map(os.remove, images)
-
-if __name__ == "__main__":
-
-    import argparse as ag
-
-    def get_args():
-        """Parse cli arguments"""
-        parser = ag.ArgumentParser(
-            description='Render affitiny propagation results')
-
-        parser.add_argument('-f', '--files',
-                            nargs='+',
-                            dest='pdb_list',
-                            required=True,
-                            help='PDB file')
-
-        parser.add_argument('-o', '--output',
-                            required=True,
-                            metavar='output.png',
-                            help='Output PNG image')
-
-        parser.add_argument('--nums',
-                            nargs='*', type=int,
-                            help='Values for numerical labels')
-
-        parser.add_argument('--draw_nums',
-                            action='store_true',
-                            help='Draw numerical labels')
-
-        parser.add_argument('--guess_nums',
-                            action='store_true',
-                            help='Guess nums from filenames',
-                            default=False)
-
-        parser.add_argument('--clear',
-                            action='store_true',
-                            help='Clear intermidiate files')
-
-        parser.add_argument('--width',
-                            nargs='?', type=int, default=640,
-                            help='Width of individual image')
-
-        parser.add_argument('--height',
-                            nargs='?', type=int, default=480,
-                            help='Height of individual image')
-
-        parser.add_argument('--moltype',
-                            nargs='?', type=str, default="general",
-                            choices=["general", "origami"],
-                            help='Height of individual image')
-
-        args_dict = parser.parse_args()
-
-        return vars(args_dict)
-
-    args = get_args()
-
-    AffRender(**args)
