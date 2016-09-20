@@ -27,7 +27,7 @@ from codecs import open
 from os import path
 
 from setuptools.extension import Extension
-# from Cython.Build import cythonize
+from Cython.Build import cythonize
 
 here = path.abspath(path.dirname(__file__))
 
@@ -39,7 +39,7 @@ with open('README.rst', 'r') as f:
 extensions = [
     Extension(
         "affbio/lvc",
-        sources=["affbio/lvc.pyx"])
+        ["affbio/lvc.pyx"])
 ]
 
 
@@ -49,7 +49,7 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='0.0.4',
+    version='0.0.4.1',
 
     description='Affinity Propagation for biostructures',
     long_description=long_description,
@@ -116,7 +116,7 @@ setup(
         'bottleneck',
         ],
 
-#    ext_modules=cythonize(extensions),
+    ext_modules=cythonize(extensions),
 
     # List additional groups of dependencies here (e.g. development
     # dependencies). You can install these using the following syntax,
