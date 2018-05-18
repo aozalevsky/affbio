@@ -28,6 +28,7 @@ from os import path
 
 from setuptools.extension import Extension
 from Cython.Build import cythonize
+import numpy
 
 here = path.abspath(path.dirname(__file__))
 
@@ -49,7 +50,7 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='0.0.4.1',
+    version='0.0.4.2',
 
     description='Affinity Propagation for biostructures',
     long_description=long_description,
@@ -106,7 +107,7 @@ setup(
         ],
 
     install_requires=[
-        'numpy>=1.6,<1.11',
+        'numpy>=1.6',
         'mpi4py',
         'h5py',
         'psutil',
@@ -117,6 +118,7 @@ setup(
         ],
 
     ext_modules=cythonize(extensions),
+    include_dirs=[numpy.get_include()],
 
     # List additional groups of dependencies here (e.g. development
     # dependencies). You can install these using the following syntax,
