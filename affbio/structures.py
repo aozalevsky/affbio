@@ -38,9 +38,9 @@ import prody
 import pyRMSD.RMSDCalculator
 from pyRMSD import condensedMatrix
 
-from .utils import task
+from natsort import natsorted
 
-from natsort import natsorted, ns
+from .utils import task
 
 
 def load_pdb_coords(
@@ -234,11 +234,17 @@ def calc_rmsd_matrix(
         tier=1,
         mpi=None,
         verbose=False,
+        noalign=False,
         *args, **kwargs):
 
-    def calc_diag_chunk(ic, tS):
+    if noalign:
+        cl = 'NOSUP_SERIAL_CALCULATOR'
+    else:
+        cl = "KABSCH_SERIAL_CALCULATOR"
+
+    def calc_diag_chunk(ic, tS, cl):
         calculator = pyRMSD.RMSDCalculator.RMSDCalculator(
-            "KABSCH_SERIAL_CALCULATOR",
+            cl,
             ic)
         rmsd = calculator.pairwiseRMSDMatrix()
         rmsd_matrix = condensedMatrix.CondensedMatrix(rmsd)
@@ -247,14 +253,14 @@ def calc_rmsd_matrix(
             for j in range(i):
                 tS[i, j] = rmsd_matrix[i, j]
 
-    def calc_chunk(ic, jc, tS):
+    def calc_chunk(ic, jc, tS, cl):
         ln, n, d = ic.shape
         ttS = np.zeros((ln + 1, n, d))
         ttS[1:] = jc
         for i in range(ln):
             ttS[0] = ic[i]
             calculator = pyRMSD.RMSDCalculator.RMSDCalculator(
-                "KABSCH_SERIAL_CALCULATOR",
+                cl,
                 ttS)
             tS[i] = calculator.oneVsFollowing(0)
 
@@ -316,9 +322,9 @@ def calc_rmsd_matrix(
             tit = time.time()
 
         if i == j:
-            calc_diag_chunk(ic, tS)
+            calc_diag_chunk(ic, tS, cl)
         else:
-            calc_chunk(ic, jc, tS)
+            calc_chunk(ic, jc, tS, cl)
 
         RMs.select_hyperslab((i * l, j * l), (l, l))
         RM.id.write(ms, RMs, tS)

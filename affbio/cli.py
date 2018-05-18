@@ -101,6 +101,11 @@ def get_args(choices):
                           help='Threshold in Angstroms to check PBC \
                           artifacts. Default is 10.0 A')
 
+    load_pdb.add_argument('--noalign',
+                          action='store_true',
+                          dest='noalign',
+                          help='Do not superpose structures')
+
     preference = parser.add_argument_group('calculate_preference')
 
     preference.add_argument('--factor',
