@@ -130,7 +130,7 @@ def render_b_factor(
         TMxvg = TMbfn + '.xvg'
 
         call = [
-            'g_rmsf',
+            'gmx', 'rmsf',
             '-s', LC[C[i]],
             '-f', TMtrj,
             '-oq', TMbfac,
