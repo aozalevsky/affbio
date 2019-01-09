@@ -11,3 +11,8 @@ data
 affbio.egg-info
 build
 dist
+.eggs**
+app/.rope**
+.rope**
+commands.txt
+copyright
