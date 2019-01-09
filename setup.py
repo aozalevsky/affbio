@@ -39,7 +39,7 @@ with open('README.rst', 'r') as f:
 
 extensions = [
     Extension(
-        "affbio/lvc",
+        "affbio.lvc",
         ["affbio/lvc.pyx"])
 ]
 
