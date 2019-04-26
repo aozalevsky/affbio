@@ -52,23 +52,30 @@ def load_pdb_coords(
         threshold=10.0,
         mpi=None,
         verbose=False,
+        selection='all',
         *args, **kwargs):
 
-    def check_pbc(coords, threshold=10.0):
+    def check_pbc(coords, threshold=10.0, selection='all'):
         for i in range(len(coords) - 1):
             assert np.linalg.norm(coords[i] - coords[i + 1]) < threshold
 
-    def parse_pdb(i, pbc=True, threshold=10.0):
+    def parse_pdb(i, pbc=True, threshold=10.0, selection='all'):
         """Parse PDB files"""
         ps = prody.parsePDB(i)
-        pc = ps.getCoords()
+        pc_ = ps.select(selection)
+        if pc_ is None:
+            raise ValueError('Empty selection "%s"' % selection)
+
+        pc = pc_.getCoords()
         if pbc:
             check_pbc(pc, threshold)
         return pc
 
-    def estimate_pdb_numatoms(topology, pbc=True, threshold=10.0):
+    def estimate_pdb_numatoms(
+            topology, pbc=True, threshold=10.0, selection='all'):
 
-        pdb_t = parse_pdb(topology, pbc=pbc, threshold=threshold)
+        pdb_t = parse_pdb(
+            topology, pbc=pbc, threshold=threshold, selection=selection)
 
         return pdb_t.shape
 
@@ -78,7 +85,9 @@ def load_pdb_coords(
             topology=None,
             pbc=True,
             threshold=10.0,
-            NPROCS=1):
+            selection='all',
+            NPROCS=1,
+            ):
 
         N = len(pdb_list)
         r = N % NPROCS
@@ -93,7 +102,8 @@ def load_pdb_coords(
             na, nc = estimate_pdb_numatoms(
                 topology,
                 pbc=pbc,
-                threshold=threshold)
+                threshold=threshold,
+                selection=selection)
 
         shape = (N, na, nc)
 
@@ -180,6 +190,7 @@ def load_pdb_coords(
             topology=topology,
             pbc=pbc,
             threshold=threshold,
+            selection=selection,
             NPROCS=NPROCS)
 
         N = shape[0]
@@ -214,7 +225,10 @@ def load_pdb_coords(
 
     for i in range(tb, te):
         try:
-            tS = parse_pdb(pdb_list[i], pbc=pbc, threshold=threshold)
+            tS = parse_pdb(
+                pdb_list[i],
+                pbc=pbc, threshold=threshold, selection=selection)
+
             if verbose:
                 print('Parsed %s' % pdb_list[i])
         except:

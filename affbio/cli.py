@@ -106,6 +106,11 @@ def get_args(choices):
                           dest='noalign',
                           help='Do not superpose structures')
 
+    load_pdb.add_argument('--selection',
+                          default='all',
+                          dest='selection',
+                          help='Atom selection string in ProDy format')
+
     preference = parser.add_argument_group('calculate_preference')
 
     preference.add_argument('--factor',
