@@ -52,6 +52,9 @@ affbio -m aff_matrix.hdf5 -t render --draw_nums --merged_labels --bcolor -o clus
 
 
 [1][http://www.psi.toronto.edu/index.php?q=affinity%20propagation]
+
 [2][http://scikit-learn.org/stable/modules/generated/sklearn.cluster.AffinityPropagation.html]
+
 [3][http://www.gromacs.org/]
+
 [4][http://docs.h5py.org/en/latest/mpi.html]
