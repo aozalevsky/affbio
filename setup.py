@@ -44,7 +44,10 @@ setup(
     # https://packaging.python.org/en/latest/single_source_version.html
     version='0.0.4.2',
 
-    description='Affinity Propagation for biostructures',
+    description=(
+        "Affinity Propagation for structures of biomolecules. "
+        "First developed for clustering of DNA origami structures "
+        "(see https://doi.org/10.1093/nar/gkx1262 for details)"),
     long_description=long_description,
 
     # The project's main homepage.
