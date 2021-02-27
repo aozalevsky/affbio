@@ -42,7 +42,7 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='0.0.4.2',
+    version='0.0.4.3',
 
     description=(
         "Affinity Propagation for structures of biomolecules. "
@@ -103,6 +103,8 @@ setup(
         ],
 
     install_requires=[
+        'Cython>=0.19.0',
+        'numpy>=1.6',
         'mpi4py',
         'h5py',
         'psutil',
