@@ -27,7 +27,6 @@ from codecs import open
 from os import path
 
 from setuptools.extension import Extension
-from Cython.Build import cythonize
 import numpy
 
 here = path.abspath(path.dirname(__file__))
@@ -36,13 +35,6 @@ here = path.abspath(path.dirname(__file__))
 
 with open('README.rst', 'r') as f:
     long_description = f.read()
-
-extensions = [
-    Extension(
-        "affbio.lvc",
-        ["affbio/lvc.pyx"])
-]
-
 
 setup(
     name='affbio',
@@ -104,20 +96,26 @@ setup(
     setup_requires=[
         'setuptools>=25.0',
         'Cython>=0.19.0',
+        'numpy>=1.6',
         ],
 
     install_requires=[
-        'numpy>=1.6',
         'mpi4py',
         'h5py',
         'psutil',
-        'natsort',
+        'natsort<=7.0.0',
         'prody',
         'pyRMSD',
         'bottleneck',
         ],
 
-    ext_modules=cythonize(extensions),
+    ext_modules=[
+        Extension(
+            "affbio.lvc",
+            sources=["affbio/lvc.pyx"],
+        ),
+    ],
+
     include_dirs=[numpy.get_include()],
 
     # List additional groups of dependencies here (e.g. development
