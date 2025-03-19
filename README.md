@@ -4,6 +4,10 @@ This is a set of tools for clustering structures of biomolecules built around **
 
 ## Installation
 
+### Python2
+
+AffBio was developed using Python2 and is not compatible with Python3. I'm planning to upgrade it, but I have no specific timeline. 
+
 ### Prerequisites
 
 Before installing affbio with pip install prerequisites. For Ubuntu LTS you can use following commands:
