@@ -24,7 +24,10 @@
 
 import os
 import re
-import subprocess
+
+from PIL import Image, ImageDraw, ImageFont
+
+from .checks import AffBioError
 
 
 class AffRender(object):
@@ -77,13 +80,18 @@ class AffRender(object):
             self.out = filename + '_color.png'
             self.process_models()
 
+        self.pymol.stop()
+
     @staticmethod
     def init_pymol():
-        import __main__
-        __main__.pymol_argv = ['pymol', '-qc']
-        import pymol
-        pymol.finish_launching()
-        return pymol
+        try:
+            import pymol2
+        except ImportError:
+            raise AffBioError(
+                "The render task needs PyMOL: pip install 'affbio[render]'")
+        session = pymol2.PyMOL()
+        session.start()
+        return session
 
     def setup_scene(self):
 
@@ -101,22 +109,27 @@ class AffRender(object):
 
     @staticmethod
     def tile(images, out, direction="h"):
+        """Put images edge to edge on a transparent canvas."""
+        opened = [Image.open(i).convert('RGBA') for i in images]
 
-        tile_format_d = {
-            'h': "%dx",
-            'v': "x%d"}
+        if direction == 'h':
+            size = (sum(i.width for i in opened),
+                    max(i.height for i in opened))
+        else:
+            size = (max(i.width for i in opened),
+                    sum(i.height for i in opened))
 
-        tile_format = tile_format_d[direction] % len(images)
+        canvas = Image.new('RGBA', size, (0, 0, 0, 0))
+        offset = 0
+        for im in opened:
+            if direction == 'h':
+                canvas.paste(im, (offset, 0))
+                offset += im.width
+            else:
+                canvas.paste(im, (0, offset))
+                offset += im.height
 
-        call = [
-            'montage',
-            '-mode', 'Concatenate',
-            '-background', 'none',
-            '-tile', tile_format]
-        call.extend(images)
-        call.append(out)
-
-        subprocess.call(call)
+        canvas.save(out)
 
     # DNA origami specific part ###
 
@@ -144,7 +157,7 @@ class AffRender(object):
         # Find single stranded regions
         space = {"single": []}
         self.pymol.cmd.iterate("resn S*", "single.append(resi)", space=space)
-        single = map(int, space["single"])
+        single = [int(s) for s in space["single"]]
 
         # Set stich width for single stranded region
         # Only change stick radius for contigious regions in backbone
@@ -204,6 +217,9 @@ class AffRender(object):
     def draw_nucleic_acid(self):
         self.pymol.cmd.hide("everything")
         self.pymol.cmd.show("lines")
+        # Atoms without bonds (C-alpha traces, coarse-grained models
+        # without CONECT records) are invisible as lines
+        self.pymol.cmd.show("nb_spheres")
         # self.pymol.cmd.show("cartoon")
         # self.pymol.cmd.set("cartoon_nucleic_acid_mode", 1)
         # self.pymol.cmd.set("cartoon_tube_radius", 0.1)
@@ -215,28 +231,20 @@ class AffRender(object):
         self.pymol.cmd.spectrum("b")
 
     @classmethod
-    def gen_label(self, basename="gg", num=100, width=640, height=480):
+    def gen_label(cls, basename="gg", num=100, width=640, height=480):
+        """Transparent image with "N%" right-aligned, as wide as 20% of
+        a pose image."""
 
         lwidth = int(0.2 * width)  # 20% - empirically
-#        border = int(0.05 * lwidth)  # Border is 5% of label width
 
-        name = self.gen_name(basename, 0)
+        name = cls.gen_name(basename, 0)
 
-        call = [
-            "convert",
-            "-transparent", "white",
-            # "-background", "white",
-            # "-bordercolor", "white",
-            "-size",
-            # "%dx%d" % (lwidth - 2 * border, height - 2 * border),
-            "%dx%d" % (lwidth, height),
-            # "-border", "%d" % border,
-            "-gravity", "East",
-            "-pointsize", "%d" % int(lwidth / 3),
-            "caption:%d%%" % num,
-            name]
-
-        subprocess.call(call)
+        image = Image.new('RGBA', (lwidth, height), (0, 0, 0, 0))
+        font = ImageFont.load_default(size=max(1, lwidth // 3))
+        ImageDraw.Draw(image).text(
+            (lwidth - 1, height // 2), "%d%%" % num,
+            font=font, fill=(0, 0, 0, 255), anchor='rm')
+        image.save(name)
 
         return name
 
@@ -313,7 +321,8 @@ class AffRender(object):
         self.tile(images=images, out=name)
 
         if self.clear:
-            map(os.remove, images)
+            for image in images:
+                os.remove(image)
 
         return name
 
@@ -341,4 +350,5 @@ class AffRender(object):
         self.tile(images, self.out, direction='v')
 
         if self.clear:
-            map(os.remove, images)
+            for image in images:
+                os.remove(image)
