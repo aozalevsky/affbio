@@ -524,7 +524,11 @@ def aff_cluster(
             if tier > 1:
                 PGn = 'tier%d' % (tier - 1)
                 PG = Sf.require_group(PGn)
-                PL = PG['aff_labels'][:]
+                # Label of every tier-1 structure at the previous tier
+                if tier > 2:
+                    PL = PG['aff_labels_merged'][:]
+                else:
+                    PL = PG['aff_labels'][:]
                 NL = np.copy(PL)
 
                 for i in range(len(C)):

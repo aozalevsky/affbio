@@ -89,3 +89,39 @@ def test_tier2_merged_labels(full_run, tmp_path):
     assert merged.min() >= 0 and merged.max() < k2
     assert len((tmp_path / 'aff_labels.out').read_text().splitlines()) == 1047
     assert 'AFF tier: 2' in (tmp_path / 'aff_stat.out').read_text()
+
+
+def test_rerun_tier2_after_tier1_changed(small_run, tmp_path):
+    shutil.copy(small_run / 'm.hdf5', tmp_path / 'm.hdf5')
+    tier2 = ['-m', 'm.hdf5', '--tier', '2', '-t', 'cluster']
+    r = run_affbio(tier2, cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    k1 = len(read(tmp_path, 'aff_centers'))
+    # re-cluster tier 1 with another preference: another number of centers
+    r = run_affbio(['-m', 'm.hdf5', '-t', 'set_preference', 'aff_cluster',
+                    'print_stat', '--factor', '0.3'], cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    k1_new = len(read(tmp_path, 'aff_centers'))
+    assert k1_new != k1
+    r = run_affbio(tier2, cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert len(read(tmp_path, 'struct', tier=2)) == k1_new
+
+
+def test_tier3_merged_labels(adk_frames, tmp_path):
+    frames = adk_frames[::3]
+    run = ['-m', 'm.hdf5', '--conv_iter', '200', '-t', 'cluster',
+           '--merged_labels']
+    for tier in (1, 2, 3):
+        args = run + ['--tier', str(tier)] + (['-f'] + frames
+                                              if tier == 1 else [])
+        r = run_affbio(args, cwd=tmp_path)
+        assert r.returncode == 0, (tier, r.stderr)
+    merged2 = read(tmp_path, 'aff_labels_merged', tier=2)
+    labels3 = read(tmp_path, 'aff_labels', tier=3)
+    merged3 = read(tmp_path, 'aff_labels_merged', tier=3)
+    assert len(merged3) == len(frames)
+    # tier-3 items are the tier-2 centers, in tier-2 cluster order
+    assert np.array_equal(merged3, labels3[merged2])
+    lines = (tmp_path / 'aff_labels.out').read_text().splitlines()
+    assert lines == ['%s\t%d' % (f, k) for f, k in zip(frames, merged3)]
