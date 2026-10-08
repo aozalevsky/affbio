@@ -21,14 +21,12 @@
 #
 
 # General modules
+import io
 import time
 import cProfile
 import pstats
-import StringIO
 
-
-# MPI parallelism
-from mpi4py import MPI
+from .mpi import get_comm
 
 
 def dummy(*args, **kwargs):
@@ -36,8 +34,8 @@ def dummy(*args, **kwargs):
 
 
 def init_mpi():
-    # Get MPI info
-    comm = MPI.COMM_WORLD
+    # Get MPI info (a single-process stand-in without mpi4py)
+    comm = get_comm()
     # Get number of processes
     NPROCS = comm.size
     # Get rank
@@ -62,7 +60,7 @@ class Bunch(object):
 
 
 def task(N, NPROCS, rank):
-    l = N / NPROCS
+    l = N // NPROCS
     b = rank * l
     return (b, b + l)
 
@@ -70,7 +68,7 @@ def task(N, NPROCS, rank):
 def init_logging(task, verbose=False):
     if verbose:
 
-        print 'Starting task: %s' % task
+        print('Starting task: %s' % task)
 
     # Get current time
     t0 = time.time()
@@ -80,7 +78,7 @@ def init_logging(task, verbose=False):
 
 def finish_logging(task, t0, verbose=False):
     if verbose:
-        print "Task: %s execution time is %f" % (task, time.time() - t0)
+        print("Task: %s execution time is %f" % (task, time.time() - t0))
 
 
 def init_debug(debug=False):
@@ -95,9 +93,9 @@ def init_debug(debug=False):
 def finish_debug(pr, debug=False):
     if debug is True:
         pr.disable()
-        s = StringIO.StringIO()
+        s = io.StringIO()
         sortby = 'time'
         ps = pstats.Stats(pr, stream=s)
         ps.sort_stats(sortby)
         ps.print_stats()
-        print s.getvalue()
+        print(s.getvalue())
