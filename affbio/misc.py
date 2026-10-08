@@ -22,9 +22,6 @@
 
 # General modules
 import os
-import re
-# import uuid
-import subprocess
 
 # NumPy for arrays
 import numpy as np
@@ -33,6 +30,29 @@ import numpy as np
 import h5py
 
 from .AffRender import AffRender
+from .checks import AffBioError
+from .rmsf import cluster_bfactors
+
+# Records kept when a frame is wrapped into a MODEL block
+COORD_RECORDS = ('ATOM', 'HETATM', 'ANISOU', 'TER', 'CONECT')
+
+
+def cluster_members(Sf, tier=1, merged=False):
+    """Cluster label of every structure and the structure file names."""
+    G = Sf['tier%d' % tier]
+    if tier > 1 and merged:
+        return G['aff_labels_merged'][:], Sf['tier1']['labels'].asstr()[:]
+    return G['aff_labels'][:], G['labels'].asstr()[:]
+
+
+def model_lines(fname, number):
+    """Records of one frame as a MODEL ... ENDMDL block, without END."""
+    with open(fname, 'r') as f:
+        lines = [l for l in f if l[:6].strip() != 'END']
+    if any(l.startswith('MODEL') for l in lines):
+        return lines
+    body = [l for l in lines if l[:6].strip() in COORD_RECORDS]
+    return ['MODEL     %4d\n' % number] + body + ['ENDMDL\n']
 
 
 def cluster_to_trj(
@@ -51,32 +71,28 @@ def cluster_to_trj(
     if rank != 0:
         return
 
-    Sf = h5py.File(Sfn, 'r', driver='sec2')
-    Gn = 'tier%d' % tier
-    G = Sf.require_group(Gn)
+    if index is None or output is None:
+        raise AffBioError(
+            'cluster_to_trj needs a cluster --index and an -o output file.')
 
-    if tier > 1 and merged:
-        I = G['aff_labels_merged'][:]
-        L = Sf['tier1']['labels']
-    else:
-        I = G['aff_labels'][:]
-        L = G['labels'][:]
+    with h5py.File(Sfn, 'r', driver='sec2') as Sf:
+        I, L = cluster_members(Sf, tier, merged)
+        top = Sf['tier1']['labels'].attrs['topology']
 
-    ind = np.where(I == index)
-    frames = L[ind]
+    frames = L[I == index]
+    if len(frames) == 0:
+        raise AffBioError('There is no cluster %d; clusters are numbered '
+                          '0 to %d.' % (index, I.max()))
 
-    j = 0
+    with open(output, 'w') as fout:
+        fout.writelines(model_lines(frames[0], 1))
 
-    with open(frames[j], 'r') as fin, open(output, 'w') as fout:
-        fout.write(fin.read())
-
-    top = Sf['tier1']['labels'].attrs['topology']
     copy_connects(top, output)
 
     with open(output, 'a') as fout:
-        for j in range(1, len(frames)):
-            with open(frames[j], 'r') as fin:
-                fout.write(fin.read())
+        for k, frame in enumerate(frames[1:], 2):
+            fout.writelines(model_lines(frame, k))
+        fout.write('END\n')
 
 
 def render_b_factor(
@@ -93,21 +109,12 @@ def render_b_factor(
     if rank != 0:
         return
 
-    Sf = h5py.File(Sfn, 'r', driver='sec2')
-
-    top = Sf['tier1']['labels'].attrs['topology']
-
-    Gn = 'tier%d' % tier
-    G = Sf.require_group(Gn)
-
-    C = G['aff_centers']
-    NC = len(C)
-
-    LC = G['labels']
-
-    I = G['aff_labels']
-    if tier > 1 and merged:
-        I = G['aff_labels_merged']
+    with h5py.File(Sfn, 'r', driver='sec2') as Sf:
+        top = Sf['tier1']['labels'].attrs['topology']
+        G = Sf['tier%d' % tier]
+        C = G['aff_centers'][:]
+        LC = G['labels'].asstr()[:]
+        I, L = cluster_members(Sf, tier, merged)
 
     NI = len(I)
 
@@ -116,34 +123,9 @@ def render_b_factor(
 
     centers = []
 
-    for i in range(NC):
-
-        # TMbfn = str(uuid.uuid1())
-        TMbfn = str('cluster_%d' % i)
-        TMtrj = TMbfn + '_trj.pdb'
-        cluster_to_trj(Sfn,
-                       index=i,
-                       merged=merged,
-                       output=TMtrj,
-                       mpi=mpi)
-        TMbfac = TMbfn + '_bfac.pdb'
-        TMxvg = TMbfn + '.xvg'
-
-        call = [
-            'gmx', 'rmsf',
-            '-s', LC[C[i]],
-            '-f', TMtrj,
-            '-oq', TMbfac,
-            '-o', TMxvg,
-            '-fit']
-
-        g_rmsf = subprocess.Popen(call, stdin=subprocess.PIPE)
-        # Pass index group 0 to gromacs
-        g_rmsf.communicate(input=b'0')
-        g_rmsf.wait()
-        os.remove(TMxvg)
-        os.remove(TMtrj)
-
+    for i in range(len(C)):
+        TMbfac = 'cluster_%d_bfac.pdb' % i
+        cluster_bfactors(LC[C[i]], L[I == i], TMbfac)
         copy_connects(top, TMbfac)
         centers.append(TMbfac)
 
@@ -157,21 +139,24 @@ def render_b_factor(
 
 
 def copy_connects(src, dst):
-    with open(src, 'r') as fin, open(dst, 'r') as fout:
-        inpdb = np.array(fin.readlines())
-        ind = np.array(
-            [bool(re.match('CONECT', x)) for x in inpdb],
-            dtype=bool)
-        con = inpdb[ind]
+    """Copy the CONECT records of src into dst before ENDMDL or END."""
+    with open(src, 'r') as fin:
+        con = [l for l in fin if l.startswith('CONECT')]
+    if not con:
+        return
 
-        outpdb = fout.readlines()
-        endmdl = 'ENDMDL\n'
-        outpdb.reverse()
-        endmdl_ind = -1 - outpdb.index(endmdl)
-        outpdb.reverse()
-        outpdb.pop(endmdl_ind)
-        outpdb.extend(con)
-        outpdb.append(endmdl)
+    with open(dst, 'r') as fout:
+        lines = fout.readlines()
+
+    records = [l[:6].strip() for l in lines]
+    for marker in ('ENDMDL', 'END'):
+        if marker in records:
+            pos = len(records) - 1 - records[::-1].index(marker)
+            break
+    else:
+        pos = len(lines)
+
+    lines[pos:pos] = con
 
     with open(dst, 'w') as fout:
-        fout.write(''.join(outpdb))
+        fout.write(''.join(lines))
