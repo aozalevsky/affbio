@@ -29,7 +29,8 @@ Success means:
 | Median for preference | Replace Cython `lvc.pyx` (P-square) with an exact out-of-core NumPy radix select | Measured: exact, ~25x faster from HDF5, bounded memory. P-square in `lvc.pyx` is wrong beyond 2^24 values (float32 counters stop incrementing), i.e. for N > ~5,800 structures. Approved by the maintainer after the benchmark. |
 | Render | Replace `gmx rmsf` with MDAnalysis (same math, see component 3a); keep PyMOL and ImageMagick | Maintainer's choice; drops GROMACS, the heaviest prerequisite. MDAnalysis is on PyPI and conda-forge (2.10.0 verified in the env solve) |
 | MPI | Keep mpi4py as a required dependency; env ships MPI-enabled h5py + OpenMPI | Matches original design; serial runs work in the same env |
-| Python | `requires-python >=3.10`; env pins `python=3.12` | prody on conda-forge is built up to 3.12 only (verified by dry-run solve) |
+| Structure parsing | MDAnalysis replaces prody in `load_pdb` (topology parsed once, coordinates per file) | Maintainer's choice; MDAnalysis is already needed for render. Same coordinates (max diff 1.7e-6 A); 27 vs 20 ms per 3,341-atom file, spread over MPI ranks, negligible next to the RMSD stage |
+| Python | `requires-python >=3.10`; env `python>=3.10` (solver picks newest) | prody was the only package capping conda-forge at 3.12; without it the env solves on 3.14 (verified by dry-run) |
 | Build system | Single PEP 621 `pyproject.toml`, setuptools backend, pure-Python wheel | No compiled code left in affbio |
 | Legacy dirs | `app/`, `old/`, `supplement/` stay in the repo untouched, excluded from the package | Not part of the installed tool; kept for history |
 
@@ -46,13 +47,13 @@ Success means:
   - author Arthur Zalevsky, `aozalevsky@gmail.com` (the old `fbb.msu.ru`
     address and homepage are dead)
   - URLs: GitHub repo, paper DOI `10.1093/nar/gkx1262`
-  - dependencies: `numpy`, `h5py`, `mpi4py`, `prody`, `pyRMSD>=4.3`,
+  - dependencies: `numpy`, `h5py`, `mpi4py`, `pyRMSD>=4.3`,
     `MDAnalysis`, `bottleneck`, `natsort`, `psutil`. The `pyRMSD>=4.3` floor makes a
     plain-pip install outside conda fail fast with "no matching distribution"
     instead of trying to compile the 2015 sdist. The old `natsort<=7.0.0` cap
     (a Python 2 constraint) is dropped.
   - `[project.scripts] affbio = "affbio.cli:run"`
-  - classifiers: Python 3 only, 3.10-3.12, GPLv3+, Bio-Informatics.
+  - classifiers: Python 3 only, 3.10-3.14, GPLv3+, Bio-Informatics.
 - `[tool.setuptools] packages = ["affbio"]`.
 
 ### 2. Conda environment (`environment.yml`)
@@ -60,8 +61,8 @@ Success means:
 Name `affbio`, channel `conda-forge` only:
 
 ```
-python=3.12, numpy, h5py=*=mpi_openmpi*, mpi4py, openmpi, pyrmsd>=4.3,
-prody, mdanalysis, bottleneck, natsort, psutil, pymol-open-source,
+python>=3.10, numpy, h5py=*=mpi_openmpi*, mpi4py, openmpi, pyrmsd>=4.3,
+mdanalysis, bottleneck, natsort, psutil, pymol-open-source,
 imagemagick, pip
 pip:
   - affbio>=0.1
@@ -84,7 +85,14 @@ Module by module, the issues found by reading the code:
 - `cli.py`: `dict.keys() + dict.keys()` (3 places) -> list concatenation;
   bare `exit(0)` -> `sys.exit(0)`; the `'-i, --index'` option string is a
   single malformed flag -> `'-i', '--index'` (needed by `cluster_to_trj`).
-- `structures.py`: `np.float` -> `np.float64`;
+- `structures.py`: prody replaced by MDAnalysis. Each rank builds
+  `Universe(topology)` once (topology = `-s` or the first PDB, as before),
+  evaluates `--selection` once to atom indices (empty selection still raises
+  `ValueError`), then reads each file with
+  `MDAnalysis.coordinates.PDB.PDBReader(f).ts.positions[idx]`. A file whose
+  atom count differs from the topology raises the existing
+  `Broken structure` error. PBC check unchanged. `--selection` help text
+  says MDAnalysis syntax. `np.float` -> `np.float64`;
   `h5py.special_dtype(vlen=str)` -> `h5py.string_dtype()`;
   `partition()` `lN = ... / 2` -> `// 2`; labels copied between tiers are
   read with `.asstr()`.
@@ -188,7 +196,9 @@ temp dir once per session - the same snippet the README shows.
   one spot-checked pair matches an independent NumPy Kabsch RMSD; median and
   preference attributes present; 1 < number of clusters < N; every frame
   labeled; each exemplar belongs to its own cluster; `.out` files contain
-  plain paths; a second run yields identical labels.
+  plain paths; a second run yields identical labels. A `load_pdb` run with
+  `--selection "resid 1:100"` stores `struct` with shape `(N, 100, 3)`, and a
+  frame with a missing atom raises `Broken structure`.
 - `test_mpi.py` (skipped if `mpirun` absent): same run with
   `mpirun -n 4 --oversubscribe` on the first 1,040 frames (divisible by
   NPROCS * 4, so no truncation) gives the same exemplars and labels as a
@@ -215,8 +225,12 @@ Rewrite Installation: conda env (one command), plus "plain pip works only if
 you provide PyMOL, ImageMagick and pyRMSD>=4.3 yourself". Remove the
 "Python 2 only" notice and the GROMACS prerequisite. Prepare section: a short
 MDAnalysis snippet to split a trajectory into PDB frames, noting that
-`gmx trjconv -sep` output works too. Rest of Usage unchanged except fixed
-typos. Add test
+`gmx trjconv -sep` output works too. `--selection` now uses MDAnalysis
+syntax: list the common ProDy -> MDAnalysis translations (`chain A` ->
+`chainID A`, `resnum 10 to 20` -> `resid 10:20`, `within 5 of X` ->
+`around 5 X`; `all`, `protein`, `backbone`, `nucleic`, `name CA`,
+`resname X`, `and/or/not` are unchanged). Rest of Usage unchanged except
+fixed typos. Add test
 data attribution. Note the median change and the P-square bug for users of
 0.0.x with more than ~5,800 structures.
 
@@ -237,6 +251,11 @@ data attribution. Note the median change and the P-square bug for users of
   zero masses handled by the unweighted fallback (component 3a).
 - PDB frames with and without `ENDMDL` must both get CONECT records;
   covered by `test_rmsf.py` and `test_render.py`.
+- `--selection` syntax changes from ProDy to MDAnalysis; scripts using
+  ProDy-only keywords break (documented in README with translations).
+- Alternate locations: ProDy kept only the first altloc, MDAnalysis keeps
+  all altloc atoms. MD snapshots have none; crystallographic PDBs with
+  altlocs would get extra atoms (documented).
 - ImageMagick `caption:` needs a usable font in the conda env; verified by
   `test_render.py`.
 - OpenMPI in CI containers may need `--oversubscribe` and
