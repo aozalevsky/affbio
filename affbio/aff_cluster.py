@@ -45,6 +45,7 @@ from h5py import h5s
 from .checks import AffBioError, check_decomposition, check_disk, \
     check_stage, local_procs
 from .mpi import INT, FLOAT
+from .rmsd import rmsd_block
 from .utils import Bunch, task
 
 
@@ -57,6 +58,7 @@ def aff_cluster(
         mpi=None,
         verbose=False,
         debug=False,
+        noalign=False,
         *args, **kwargs):
 
     comm, NPROCS, rank = mpi
@@ -528,6 +530,21 @@ def aff_cluster(
                 for i in range(len(C)):
                     ind = np.where(PL == i)
                     NL[ind] = C[i]
+
+                # Centers left out to split evenly across processes join
+                # the cluster of their nearest exemplar
+                PC = PG['aff_centers'][:]
+                dropped = np.arange(len(C), len(PC))
+                if dropped.size:
+                    X = PG['struct'][PC[dropped]]
+                    E = G['struct'][I]
+                    nearest = np.argmin(
+                        rmsd_block(X, E, superpose=not noalign), axis=1)
+                    for d, k in zip(dropped, nearest):
+                        NL[PL == d] = k
+                    print('%d clusters of tier %d were left out of tier %d; '
+                          'their structures are assigned to the nearest '
+                          'exemplar' % (dropped.size, tier - 1, tier))
 
                 if 'aff_labels_merged' in G.keys():
                     del G['aff_labels_merged']

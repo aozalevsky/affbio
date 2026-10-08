@@ -173,3 +173,25 @@ def test_incompatible_stages_rejected_before_any_work(adk_frames, tmp_path):
     assert 'must be a multiple of 12' in r.stderr
     with h5py.File(tmp_path / 'm.hdf5', 'r') as f:
         assert 'rmsd' not in f['tier1']
+
+
+def test_tier2_merged_labels_with_left_out_centers(adk_frames, tmp_path):
+    r = affbio(['-m', 'm.hdf5', '-t', 'cluster', '-f'] + adk_frames[:240],
+               tmp_path)
+    assert r.returncode == 0, r.stderr
+    k1 = len(tier1(tmp_path, 'aff_centers'))
+    # a process count that makes tier 2 leave some tier-1 centers out
+    nprocs = next((p for p in (2, 3) if k1 >= 4 * p and k1 % (4 * p)), None)
+    if nprocs is None:
+        pytest.skip('%d tier-1 clusters split evenly' % k1)
+
+    r = affbio(['-m', 'm.hdf5', '--tier', '2', '-t', 'cluster',
+                '--merged_labels'], tmp_path, nprocs)
+    assert r.returncode == 0, r.stdout + r.stderr
+    with h5py.File(tmp_path / 'm.hdf5', 'r') as f:
+        k2 = len(f['tier2/aff_centers'])
+        merged = f['tier2/aff_labels_merged'][:]
+    assert len(merged) == 240
+    assert merged.min() >= 0 and merged.max() < k2
+    stat = (tmp_path / 'aff_stat.out').read_text().splitlines()[3:]
+    assert sum(float(l.split()[3]) for l in stat) == pytest.approx(100.0)
