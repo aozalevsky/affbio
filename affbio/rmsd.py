@@ -30,8 +30,16 @@ of each 4x4 key matrix.
 
 import numpy as np
 
-# Structures per side of a tile; bounds temporaries to ~100 MiB
-TILE = 512
+# Structures per tile side: at most MAX_TILE, and few enough that one
+# float64 copy of a tile stays under TILE_BYTES; together this bounds the
+# temporaries to ~100 MiB whatever the number or size of structures
+MAX_TILE = 512
+TILE_BYTES = 16 * 2 ** 20
+
+
+def tile_size(n):
+    """Structures per tile side for structures of n atoms."""
+    return max(1, min(MAX_TILE, TILE_BYTES // (24 * n)))
 
 
 def rmsd_block(A, B, superpose=True, out=None):
@@ -41,33 +49,35 @@ def rmsd_block(A, B, superpose=True, out=None):
     calculator); superpose=False compares raw coordinates (--noalign).
     Results go to `out` (la, lb) if given, else to a new float64 array.
     """
-    A = np.asarray(A, dtype=np.float64)
-    B = np.asarray(B, dtype=np.float64)
-    if superpose:
-        A = A - A.mean(axis=1, keepdims=True)
-        B = B - B.mean(axis=1, keepdims=True)
-
     la, n = A.shape[:2]
     lb = B.shape[0]
     if out is None:
         out = np.empty((la, lb))
 
-    ga = np.einsum('anx,anx->a', A, A)
-    gb = np.einsum('bnx,bnx->b', B, B)
-
-    for a0 in range(0, la, TILE):
-        a1 = min(a0 + TILE, la)
-        for b0 in range(0, lb, TILE):
-            b1 = min(b0 + TILE, lb)
+    t = tile_size(n)
+    for a0 in range(0, la, t):
+        a1 = min(a0 + t, la)
+        At, ga = _tile(A[a0:a1], superpose)
+        for b0 in range(0, lb, t):
+            b1 = min(b0 + t, lb)
+            Bt, gb = _tile(B[b0:b1], superpose)
             if superpose:
-                msd = _qcp_msd(A[a0:a1], B[b0:b1], ga[a0:a1], gb[b0:b1])
+                msd = _qcp_msd(At, Bt, ga, gb)
             else:
-                cross = (A[a0:a1].reshape(a1 - a0, -1)
-                         @ B[b0:b1].reshape(b1 - b0, -1).T)
-                msd = (ga[a0:a1, None] + gb[None, b0:b1] - 2.0 * cross) / n
+                cross = At.reshape(a1 - a0, -1) @ Bt.reshape(b1 - b0, -1).T
+                msd = (ga[:, None] + gb[None, :] - 2.0 * cross) / n
             out[a0:a1, b0:b1] = np.sqrt(np.maximum(msd, 0.0))
 
     return out
+
+
+def _tile(X, superpose):
+    """float64 copy of a tile, centered when superposing, and its sums of
+    squared coordinates."""
+    X = np.array(X, dtype=np.float64)
+    if superpose:
+        X -= X.mean(axis=1, keepdims=True)
+    return X, np.einsum('anx,anx->a', X, X)
 
 
 def _qcp_msd(A, B, ga, gb):

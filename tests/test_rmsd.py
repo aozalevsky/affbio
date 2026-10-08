@@ -58,7 +58,7 @@ def test_noalign_is_raw_rmsd():
 def test_tiles_and_out(monkeypatch):
     E = ensemble(23, n=17)
     full = rmsd_block(E, E)
-    monkeypatch.setattr(rmsd, 'TILE', 4)
+    monkeypatch.setattr(rmsd, 'MAX_TILE', 4)
     out = np.zeros((23, 23), dtype=np.float32)
     assert rmsd_block(E, E, out=out) is out
     np.testing.assert_allclose(out, full, atol=1e-5)
@@ -104,3 +104,21 @@ def test_near_collinear_chains():
     E = random_poses(line[None] + rng.normal(0, 1e-3, (12, 20, 3)), 8)
     ref = np.array([[svd_reference(x, y) for y in E] for x in E])
     np.testing.assert_allclose(rmsd_block(E, E), ref, atol=1e-6)
+
+
+def test_memory_stays_bounded_for_large_structures():
+    """Temporaries must not grow with the number of structures per block."""
+    import tracemalloc
+    rng = np.random.default_rng(9)
+    n = 20000
+    A = rng.normal(0, 10, (120, n, 3)).astype(np.float32)
+    B = rng.normal(0, 10, (120, n, 3)).astype(np.float32)
+    out = np.empty((120, 120), dtype=np.float32)
+    tracemalloc.start()
+    rmsd_block(A, B, out=out)
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    # inputs are 27 MiB each; copies of whole blocks took ~220 MiB
+    assert peak < 120 * 2 ** 20, peak / 2 ** 20
+    ref = rmsd_block(A[:3].astype(np.float64), B[:2].astype(np.float64))
+    np.testing.assert_allclose(out[:3, :2], ref, rtol=1e-5)
