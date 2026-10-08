@@ -73,10 +73,12 @@ atoms in the same order. To split a trajectory into frames with MDAnalysis,
 which is installed with AffBio:
 
 ```python
+import os
 import MDAnalysis as mda
 
 u = mda.Universe("topol.tpr", "traj.xtc")
 protein = u.select_atoms("protein")
+os.makedirs("snapshots", exist_ok=True)
 for ts in u.trajectory[::5]:
     protein.write("snapshots/frame%d.pdb" % ts.frame)
 ```
@@ -111,13 +113,22 @@ affbio -m aff_matrix.hdf5 -t render --draw_nums --bcolor -o clusters.png
 
 ### Limits
 
-Under MPI, AffBio uses a multiple of 4 x the number of processes of the
-structures and lists the files it leaves out. Each process holds blocks of
-N / processes structures, which must not exceed 32,767 (an HDF5 limit), so
-200,000 structures need at least 7 processes. The two N x N float32
-matrices need 8 x N² bytes of disk next to the HDF5 file, and clustering
-needs as much again in the working directory. AffBio checks all of this,
-and warns about memory, before it starts.
+Under MPI, the number of structures is rounded down to a multiple of
+4 x the number of processes, and AffBio lists the files it leaves out.
+Each process holds blocks of N / processes structures, which must not
+exceed 32,767 (an HDF5 limit), so 200,000 structures need at least
+7 processes.
+
+Disk space, for N structures:
+
+- the RMSD and similarity matrices take 8 x N² bytes next to the HDF5 file;
+- under MPI, clustering takes another 8 x N² bytes in the working directory;
+- when the matrix does not fit in memory, clustering also keeps up to
+  8 x N² bytes in the temporary directory (`$TMPDIR`), and a single process
+  then needs the 8 x N² bytes in the working directory as well.
+
+AffBio checks the task order, the number of processes and the free disk
+space, and warns about memory, before it starts.
 
 ## Changes since 0.0.x
 
