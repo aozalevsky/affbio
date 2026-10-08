@@ -1,5 +1,6 @@
 import os
 import shutil
+import signal
 import subprocess
 import sys
 
@@ -130,3 +131,33 @@ def test_out_of_memory_mode_matches(adk_frames, tmp_path):
     assert 'Cache size is 20 of 120' in r.stdout
     assert np.array_equal(tier1(tmp_path, 'aff_labels'), labels)
     assert np.array_equal(tier1(tmp_path, 'aff_centers'), centers)
+
+
+def run_or_kill(cmd, cwd, timeout=120):
+    """Run cmd; if it hangs, kill its whole process group and fail."""
+    p = subprocess.Popen(cmd, cwd=cwd, env=ENV, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, text=True,
+                         start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.communicate()
+        pytest.fail('affbio hung; killed after %d s' % timeout)
+    return p.returncode, out, err
+
+
+# Make the rank-0 preflight fail with an unexpected exception
+BROKEN_PREFLIGHT = ("import affbio.cli; "
+                    "affbio.cli.check_disk = "
+                    "lambda needs: (_ for _ in ()).throw(RuntimeError('boom')); "
+                    "affbio.cli.run()")
+
+
+def test_unexpected_preflight_error_does_not_hang(adk_frames, tmp_path):
+    cmd = launcher(2) + [sys.executable, '-c', BROKEN_PREFLIGHT,
+                         '-m', 'm.hdf5', '-t', 'cluster', '-f'] + \
+        adk_frames[:16]
+    code, out, err = run_or_kill(cmd, tmp_path)
+    assert code != 0
+    assert 'boom' in err

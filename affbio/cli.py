@@ -369,14 +369,18 @@ def run():
 
     error = None
     if rank == 0:
-        if args['pdb_list']:
-            args['pdb_list'] = expand_pdb_list(args['pdb_list'])
-        args['task'] = expand_tasks(args['task'])
         try:
+            if args['pdb_list']:
+                args['pdb_list'] = expand_pdb_list(args['pdb_list'])
+            args['task'] = expand_tasks(args['task'])
             for warning in preflight(args['task'], args, NPROCS):
                 print('affbio: warning: %s' % warning)
         except AffBioError as e:
             error = str(e)
+        except Exception as e:
+            # Report it to every process; otherwise they wait forever
+            traceback.print_exc()
+            error = 'unexpected error during checks: %s' % e
     error = comm.bcast(error)
 
     if error:

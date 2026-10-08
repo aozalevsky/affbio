@@ -67,3 +67,13 @@ def test_mpi_launcher_without_mpi4py(tmp_path):
     r = run_without_mpi4py(['--help'], cwd=tmp_path, env=env)
     assert r.returncode == 1
     assert 'affbio[mpi]' in r.stderr
+
+
+def test_unreadable_topology_is_explained(tmp_path, adk_frames):
+    garbage = tmp_path / 'garbage.pdb'
+    garbage.write_text('this is not a PDB file\n')
+    r = run_affbio(['-m', 'm.hdf5', '-t', 'cluster', '-s', str(garbage),
+                    '-f'] + adk_frames[:5], cwd=tmp_path)
+    assert r.returncode == 1
+    assert 'Cannot read topology' in r.stderr
+    assert 'Traceback' not in r.stderr

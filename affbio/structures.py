@@ -59,9 +59,12 @@ def expand_pdb_list(pdb_list):
 
 def selection_indices(topology, selection='all'):
     """Atom count of the topology and indices of the selected atoms."""
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        u = mda.Universe(topology)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            u = mda.Universe(topology)
+    except Exception as e:
+        raise AffBioError('Cannot read topology %s: %s' % (topology, e))
     try:
         sel = u.select_atoms(selection)
     except (SelectionError, ValueError) as e:
