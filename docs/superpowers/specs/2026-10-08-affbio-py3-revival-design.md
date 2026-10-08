@@ -14,7 +14,8 @@ Success means:
    Linux; affbio itself comes from PyPI via the env file's `pip:` section,
    everything else from conda-forge.
 2. In that environment, the README workflow works end to end on a real MD
-   trajectory: `gmx trjconv -sep` -> `affbio -t cluster` -> `affbio -t render`.
+   trajectory: split into PDB frames -> `affbio -t cluster` ->
+   `affbio -t render`. GROMACS is no longer needed.
 3. The same clustering runs in parallel with `mpirun -n 4 affbio ...`.
 4. A new release (0.1.0) is ready to upload to PyPI. Uploading happens only on
    the maintainer's explicit go.
@@ -23,10 +24,10 @@ Success means:
 
 | Topic | Decision | Why |
 |---|---|---|
-| Deployment model | conda env file installs non-pip deps from conda-forge, then `pip install affbio` | Maintainer's choice; GROMACS, PyMOL and pyRMSD are not (usefully) on PyPI |
+| Deployment model | conda env file installs non-pip deps from conda-forge, then `pip install affbio` | Maintainer's choice; PyMOL, ImageMagick and pyRMSD are not (usefully) on PyPI |
 | RMSD engine | Keep pyRMSD, use the maintained salilab fork (4.3.3, conda-forge) | Same numbers as before; PyPI only has the dead 2015 Py2 release 4.2.1 |
 | Median for preference | Replace Cython `lvc.pyx` (P-square) with an exact out-of-core NumPy radix select | Measured: exact, ~25x faster from HDF5, bounded memory. P-square in `lvc.pyx` is wrong beyond 2^24 values (float32 counters stop incrementing), i.e. for N > ~5,800 structures. Approved by the maintainer after the benchmark. |
-| Render | Keep GROMACS (`gmx rmsf`), PyMOL and ImageMagick as external prerequisites | Maintainer's choice; all three are provided by the conda env |
+| Render | Replace `gmx rmsf` with MDAnalysis (same math, see component 3a); keep PyMOL and ImageMagick | Maintainer's choice; drops GROMACS, the heaviest prerequisite. MDAnalysis is on PyPI and conda-forge (2.10.0 verified in the env solve) |
 | MPI | Keep mpi4py as a required dependency; env ships MPI-enabled h5py + OpenMPI | Matches original design; serial runs work in the same env |
 | Python | `requires-python >=3.10`; env pins `python=3.12` | prody on conda-forge is built up to 3.12 only (verified by dry-run solve) |
 | Build system | Single PEP 621 `pyproject.toml`, setuptools backend, pure-Python wheel | No compiled code left in affbio |
@@ -46,7 +47,7 @@ Success means:
     address and homepage are dead)
   - URLs: GitHub repo, paper DOI `10.1093/nar/gkx1262`
   - dependencies: `numpy`, `h5py`, `mpi4py`, `prody`, `pyRMSD>=4.3`,
-    `bottleneck`, `natsort`, `psutil`. The `pyRMSD>=4.3` floor makes a
+    `MDAnalysis`, `bottleneck`, `natsort`, `psutil`. The `pyRMSD>=4.3` floor makes a
     plain-pip install outside conda fail fast with "no matching distribution"
     instead of trying to compile the 2015 sdist. The old `natsort<=7.0.0` cap
     (a Python 2 constraint) is dropped.
@@ -60,7 +61,7 @@ Name `affbio`, channel `conda-forge` only:
 
 ```
 python=3.12, numpy, h5py=*=mpi_openmpi*, mpi4py, openmpi, pyrmsd>=4.3,
-prody, bottleneck, natsort, psutil, gromacs, pymol-open-source,
+prody, mdanalysis, bottleneck, natsort, psutil, pymol-open-source,
 imagemagick, pip
 pip:
   - affbio>=0.1
@@ -95,14 +96,38 @@ Module by module, the issues found by reading the code:
   as before on 64-bit Linux, so the existing MPI `Gather`/`Bcast` byte
   semantics are unchanged); label datasets read with `.asstr()` so the
   `.out` files contain `frame1.pdb`, not `b'frame1.pdb'`.
-- `misc.py`: `communicate(input='0')` -> `b'0'`; `map(os.remove, ...)`
-  (lazy in Py3, so files were silently not removed) -> loops;
-  `np.array(map(...), dtype=np.bool)` -> list comprehension, `bool`;
-  labels/topology read as `str`.
+- `misc.py`: the `gmx rmsf` subprocess in `render_b_factor` is replaced by
+  component 3a (the temporary `cluster_N_trj.pdb` and `.xvg` files are no
+  longer needed); `map(os.remove, ...)` (lazy in Py3, so files were silently
+  not removed) -> loops; `np.array(map(...), dtype=np.bool)` -> list
+  comprehension, `bool`; labels/topology read as `str`. `copy_connects`
+  inserts the topology's CONECT records before the trailing `ENDMDL` if
+  present, otherwise before `END` (frames written by MDAnalysis have no
+  `ENDMDL`; trjconv frames do).
 - `AffRender.py`: `map(int, ...)` -> list; `map(os.remove, ...)` -> loops;
   PyMOL start via `pymol.finish_launching(['pymol', '-qc'])`;
   ImageMagick 7: call `magick montage` / `magick` (instead of `convert`)
   when `magick` is on PATH, falling back to the IM6 names otherwise.
+
+### 3a. Cluster B-factors without GROMACS (`affbio/rmsf.py`)
+
+`cluster_bfactors(center_pdb, member_pdbs, out_pdb)` reproduces
+`gmx rmsf -s center -f members -fit -oq out` (checked against
+`gmx_rmsf.cpp`):
+
+1. `ref = Universe(center_pdb)`, `mobile = Universe(center_pdb, member_pdbs)`
+   (each member PDB is one frame).
+2. `AlignTraj(mobile, ref, select="all", weights="mass", in_memory=True)`:
+   per-frame center-of-mass removal + mass-weighted least-squares fit onto
+   the center, as gmx does with `-fit`.
+3. `RMSF(mobile.atoms)`: fluctuation about the average fitted position.
+4. B = 8*pi^2/3 * RMSF^2 (A^2) - gmx writes `800*pi^2/3 * msf[nm^2]`, the
+   same value.
+5. Write the center's coordinates with these B-factors to `out_pdb`, then
+   `copy_connects(topology, out_pdb)` as before.
+
+If any guessed atomic mass is zero (e.g. coarse-grained origami beads),
+fall back to an unweighted fit and log a warning.
 
 pyRMSD calls (`KABSCH_SERIAL_CALCULATOR`, `NOSUP_SERIAL_CALCULATOR`,
 `pairwiseRMSDMatrix`, `oneVsFollowing`, `condensedMatrix`) are unchanged.
@@ -152,13 +177,13 @@ Derived files committed to the repo (~1 MB):
 
 ### 6. Tests (`tests/`, pytest)
 
-Fixture: run `gmx trjconv -f adk_ca.xtc -s adk_ca.pdb -o frame.pdb -sep`
-(group 0 on stdin) into a temp dir once per session - the README workflow.
+Fixture: split `adk_ca.xtc` into one PDB per frame with MDAnalysis into a
+temp dir once per session - the same snippet the README shows.
 
 - `test_median.py` (no external tools): `streaming_median` equals
   `np.median` of the strict lower triangle for odd/even counts, mixed signs,
   heavy duplicates, and a block size forcing many blocks.
-- `test_cluster.py` (needs `gmx`): `affbio -m m.hdf5 -t cluster -f
+- `test_cluster.py`: `affbio -m m.hdf5 -t cluster -f
   frames/*.pdb` on the AdK frames. Asserts: RMSD matrix has zero diagonal and
   one spot-checked pair matches an independent NumPy Kabsch RMSD; median and
   preference attributes present; 1 < number of clusters < N; every frame
@@ -168,7 +193,10 @@ Fixture: run `gmx trjconv -f adk_ca.xtc -s adk_ca.pdb -o frame.pdb -sep`
   `mpirun -n 4 --oversubscribe` on the first 1,040 frames (divisible by
   NPROCS * 4, so no truncation) gives the same exemplars and labels as a
   serial run on the same 1,040 frames.
-- `test_render.py` (needs `gmx`, PyMOL, ImageMagick): `affbio -t render
+- `test_rmsf.py`: `cluster_bfactors` on 50 AdK frames equals an independent
+  NumPy computation (mass-weighted Kabsch fit + RMSF + 8*pi^2/3 factor), and
+  CONECT records are copied.
+- `test_render.py` (needs PyMOL, ImageMagick): `affbio -t render
   --draw_nums --bcolor -o clusters.png` after clustering produces non-empty
   `clusters.png` and `clusters_color.png`.
 - `test_cli.py`: `affbio --help` exits 0 and lists all tasks.
@@ -184,8 +212,11 @@ No publishing workflow.
 ### 8. README
 
 Rewrite Installation: conda env (one command), plus "plain pip works only if
-you provide GROMACS, PyMOL, ImageMagick and pyRMSD>=4.3 yourself". Remove the
-"Python 2 only" notice. Usage section unchanged except fixed typos. Add test
+you provide PyMOL, ImageMagick and pyRMSD>=4.3 yourself". Remove the
+"Python 2 only" notice and the GROMACS prerequisite. Prepare section: a short
+MDAnalysis snippet to split a trajectory into PDB frames, noting that
+`gmx trjconv -sep` output works too. Rest of Usage unchanged except fixed
+typos. Add test
 data attribution. Note the median change and the P-square bug for users of
 0.0.x with more than ~5,800 structures.
 
@@ -201,8 +232,11 @@ data attribution. Note the median change and the P-square bug for users of
 
 ## Risks
 
-- `gmx rmsf -oq` output format: `copy_connects` expects an `ENDMDL` line;
-  verified by `test_render.py`.
+- Mass guessing differs slightly between MDAnalysis and GROMACS, so
+  B-factors (and render colors) can differ marginally from 0.0.x output;
+  zero masses handled by the unweighted fallback (component 3a).
+- PDB frames with and without `ENDMDL` must both get CONECT records;
+  covered by `test_rmsf.py` and `test_render.py`.
 - ImageMagick `caption:` needs a usable font in the conda env; verified by
   `test_render.py`.
 - OpenMPI in CI containers may need `--oversubscribe` and
