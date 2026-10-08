@@ -153,15 +153,20 @@ def load_pdb_coords(
         shape = (nstruct, natoms, ncoords)
         chunk = (1, natoms, ncoords)
 
-        G = Sf.require_group('tier%d' % tier)
-        S = G.require_dataset(
+        # Rebuild this tier from scratch; higher tiers were built on it
+        for name in list(Sf):
+            if name[4:].isdigit() and int(name[4:]) >= tier:
+                del Sf[name]
+
+        G = Sf.create_group('tier%d' % tier)
+        S = G.create_dataset(
             'struct',
             shape,
             dtype=np.float64,
             chunks=chunk)
         S.attrs['nprocs'] = NPROCS
 
-        L = G.require_dataset(
+        L = G.create_dataset(
             'labels',
             (nstruct,),
             dtype=h5py.string_dtype())
