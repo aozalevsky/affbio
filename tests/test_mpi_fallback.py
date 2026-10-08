@@ -43,3 +43,26 @@ def test_utils():
     assert task(10, 2, 1) == (5, 10)
     assert isinstance(task(10, 3, 0)[1], int)
     finish_debug(init_debug(True), True)
+
+
+@pytest.mark.parametrize('var, value', [('SLURM_STEP_NUM_TASKS', '4'),
+                                        ('PMIX_RANK', '2')])
+def test_slurm_or_pmix_launch_without_mpi4py(monkeypatch, var, value):
+    monkeypatch.setattr(mpi, 'MPI', None)
+    for v in ('OMPI_COMM_WORLD_SIZE', 'PMI_SIZE', 'SLURM_STEP_NUM_TASKS',
+              'PMIX_RANK'):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv(var, value)
+    with pytest.raises(AffBioError, match=r"affbio\[mpi\]"):
+        get_comm()
+
+
+@pytest.mark.parametrize('var, value', [('SLURM_STEP_NUM_TASKS', '1'),
+                                        ('PMIX_RANK', '0')])
+def test_single_task_launch_runs_serially(monkeypatch, var, value):
+    monkeypatch.setattr(mpi, 'MPI', None)
+    for v in ('OMPI_COMM_WORLD_SIZE', 'PMI_SIZE', 'SLURM_STEP_NUM_TASKS',
+              'PMIX_RANK'):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv(var, value)
+    assert isinstance(get_comm(), SerialComm)

@@ -37,8 +37,19 @@ except ImportError:
 INT = MPI.INT if MPI is not None else None
 FLOAT = MPI.FLOAT if MPI is not None else None
 
-# Set by mpirun/mpiexec (Open MPI, MPICH, srun --mpi=pmi2)
-LAUNCHER_SIZE_VARS = ('OMPI_COMM_WORLD_SIZE', 'PMI_SIZE')
+# Number of processes, set by mpirun/mpiexec (Open MPI, MPICH),
+# srun --mpi=pmi2 and srun in general
+LAUNCHER_SIZE_VARS = ('OMPI_COMM_WORLD_SIZE', 'PMI_SIZE',
+                      'SLURM_STEP_NUM_TASKS')
+# Rank of this process under PMIx (srun --mpi=pmix), which sets no size
+LAUNCHER_RANK_VARS = ('PMIX_RANK',)
+
+
+def launched_in_parallel():
+    """True if an MPI launcher started this as one of several processes."""
+    return (any(int(os.environ.get(v, '1')) > 1 for v in LAUNCHER_SIZE_VARS)
+            or any(int(os.environ.get(v, '0')) > 0
+                   for v in LAUNCHER_RANK_VARS))
 
 
 class SerialComm(object):
@@ -77,7 +88,7 @@ def get_comm():
     """COMM_WORLD from mpi4py, or SerialComm when mpi4py is not installed."""
     if MPI is not None:
         return MPI.COMM_WORLD
-    if any(int(os.environ.get(v, '1')) > 1 for v in LAUNCHER_SIZE_VARS):
+    if launched_in_parallel():
         raise AffBioError(
             'affbio was started by an MPI launcher, but mpi4py is not '
             "installed. Install it with: pip install 'affbio[mpi]'")
