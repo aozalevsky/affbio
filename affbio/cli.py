@@ -22,22 +22,32 @@
 
 # General modules
 import argparse as ag
+import os
+import sys
+import traceback
 from collections import OrderedDict as OD
 
+import h5py
 
 from affbio.utils import init_mpi, init_logging, finish_logging, dummy, \
     init_debug, finish_debug
-from affbio.structures import load_pdb_coords, calc_rmsd_matrix
+from affbio.checks import AffBioError, check_decomposition, check_disk, \
+    check_parallel_io, disk_needs, effective_n, memory_warning
+from affbio.structures import load_pdb_coords, calc_rmsd_matrix, \
+    expand_pdb_list, selection_indices
 from affbio.prepare import prepare_cluster_matrix, calc_median, set_preference
 from affbio.aff_cluster import aff_cluster, print_stat
 from affbio.misc import render_b_factor, cluster_to_trj
+
+# Tasks that create or split the N x N matrices
+MATRIX_TASKS = ('load_pdb', 'calc_rmsd', 'prepare_matrix', 'aff_cluster')
 
 
 def get_args(choices):
     """Parse cli arguments"""
 
     parser = ag.ArgumentParser(
-        description='Parallel ffitiny propagation for biomolecules')
+        description='Parallel affinity propagation for biomolecules')
 
     parser.add_argument('-m',
                         required=True,
@@ -63,8 +73,8 @@ def get_args(choices):
     parser.add_argument('-o', '--output',
                         dest='output',
                         metavar='OUTPUT',
-                        help='For "render" ans "cluster_to_trj" tasks \
-                        name of output PNG image of mutiframe PDB file')
+                        help='For "render" and "cluster_to_trj" tasks \
+                        name of output PNG image or multiframe PDB file')
 
     parser.add_argument('--debug',
                         action='store_true',
@@ -109,7 +119,7 @@ def get_args(choices):
     load_pdb.add_argument('--selection',
                           default='all',
                           dest='selection',
-                          help='Atom selection string in ProDy format')
+                          help='Atom selection string in MDAnalysis syntax')
 
     preference = parser.add_argument_group('calculate_preference')
 
@@ -182,11 +192,11 @@ def get_args(choices):
     render.add_argument('--moltype',
                         nargs='?', type=str, default="general",
                         choices=["general", "origami"],
-                        help='Height of individual image')
+                        help='Type of molecule to draw')
 
-    export = parser.add_argument_group('cluter_to_trj')
+    export = parser.add_argument_group('cluster_to_trj')
 
-    export.add_argument('-i, --index',
+    export.add_argument('-i', '--index',
                         metavar='INDEX',
                         type=int,
                         dest='index',
@@ -227,18 +237,79 @@ def wrapper_tasks():
     return tasks
 
 
+def expand_tasks(tasks):
+    """Replace the 'cluster' and 'all' shortcuts by the tasks they run."""
+    expanded = []
+    for t in tasks:
+        if t == 'all':
+            expanded += list(main_tasks()) + list(misc_tasks())
+        elif t == 'cluster':
+            expanded += list(main_tasks())
+        else:
+            expanded.append(t)
+    return expanded
+
+
+def tier_size(sfn, tier, from_previous):
+    """(structures, atoms, existing datasets) of a tier already on disk."""
+    source = tier - 1 if from_previous else tier
+    try:
+        with h5py.File(sfn, 'r') as f:
+            g = f['tier%d' % source]
+            natoms = g['struct'].shape[1]
+            if from_previous:
+                n = len(g['aff_centers'])
+            else:
+                n = g['struct'].shape[0]
+            current = f.get('tier%d' % tier)
+            existing = tuple(current) if current is not None else ()
+    except (OSError, KeyError) as e:
+        raise AffBioError(
+            'Cannot read tier %d data from %s (%s); run the earlier tasks '
+            'first.' % (source, sfn, e))
+    return n, natoms, existing
+
+
+def preflight(tasks, args, nprocs):
+    """Check sizes, process count and disk space before any work.
+
+    Returns a list of warnings; raises AffBioError on hard errors.
+    """
+    if not set(tasks) & set(MATRIX_TASKS):
+        return []
+
+    sfn, tier = args['Sfn'], args['tier']
+
+    if 'load_pdb' in tasks and tier == 1:
+        pdb_list = args['pdb_list'] or []
+        if not pdb_list:
+            raise AffBioError('No structures given; use -f FILE ...')
+        n = len(pdb_list)
+        topology = args['topology'] or pdb_list[0]
+        if not os.path.exists(topology):
+            raise AffBioError('No such file: %s' % topology)
+        natoms = len(selection_indices(topology, args['selection'])[1])
+        existing = ()
+    else:
+        n, natoms, existing = tier_size(sfn, tier, 'load_pdb' in tasks)
+
+    check_decomposition(n, nprocs)
+    n = effective_n(n, nprocs)
+    overwrite = 'load_pdb' in tasks and tier == 1
+    check_disk(disk_needs(sfn, n, tasks, existing, overwrite))
+
+    warnings = []
+    for stage in ('calc_rmsd', 'prepare_matrix'):
+        if stage in tasks:
+            w = memory_warning(stage, n, nprocs, natoms)
+            if w:
+                warnings.append(w)
+    return warnings
+
+
 def run_tasks(tasks, args):
 
     comm, NPROCS, rank = args['mpi']
-
-    if len(tasks) == 1:
-        tsk = tasks[0]
-
-        if tsk == 'all':
-            tasks = main_tasks().keys() + misc_tasks().keys()
-
-        elif tsk == 'cluster':
-            tasks = main_tasks().keys()
 
     for t in tasks:
         run_task(t, args)
@@ -267,31 +338,71 @@ def run_task(task, args):
 
 
 def run():
-    mpi = init_mpi()
+    try:
+        mpi = init_mpi()
+    except AffBioError as e:
+        sys.exit('affbio: error: %s' % e)
 
     comm, NPROCS, rank = mpi
 
+    try:
+        check_parallel_io(NPROCS, h5py.get_config().mpi)
+    except AffBioError as e:
+        if rank == 0:
+            print('affbio: error: %s' % e, file=sys.stderr)
+        sys.exit(1)
+
     args = None
-    is_exit = False
+    exit_code = None
 
     if rank == 0:
         try:
-            tasks = main_tasks().keys() + misc_tasks().keys() + \
-                wrapper_tasks().keys()
+            tasks = list(main_tasks()) + list(misc_tasks()) + \
+                list(wrapper_tasks())
             args = get_args(tasks)
-        except SystemExit:
-            is_exit = True
-    is_exit = comm.bcast(is_exit)
+        except SystemExit as e:
+            exit_code = e.code
+    exit_code = comm.bcast(exit_code)
 
-    if is_exit:
-        exit(0)
+    if exit_code is not None:
+        sys.exit(exit_code)
+
+    error = None
+    if rank == 0:
+        if args['pdb_list']:
+            args['pdb_list'] = expand_pdb_list(args['pdb_list'])
+        args['task'] = expand_tasks(args['task'])
+        try:
+            for warning in preflight(args['task'], args, NPROCS):
+                print('affbio: warning: %s' % warning)
+        except AffBioError as e:
+            error = str(e)
+    error = comm.bcast(error)
+
+    if error:
+        if rank == 0:
+            print('affbio: error: %s' % error, file=sys.stderr)
+        sys.exit(1)
 
     args = comm.bcast(args)
 
     args['mpi'] = mpi
 
-    run_tasks(args['task'], args)
+    try:
+        run_tasks(args['task'], args)
+    except AffBioError as e:
+        where = ' (rank %d)' % rank if NPROCS > 1 else ''
+        print('affbio: error%s: %s' % (where, e), file=sys.stderr)
+        if NPROCS > 1:
+            comm.Abort(1)
+        sys.exit(1)
+    except Exception:
+        # Without this, the other processes would wait forever
+        if NPROCS > 1:
+            traceback.print_exc()
+            comm.Abort(1)
+        raise
 
 
-if __name__ == "__main__" and __package__ is None:
+if __name__ == "__main__":
     run()

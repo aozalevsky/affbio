@@ -169,7 +169,7 @@ class AffRender(object):
 
         def get_ind(line):
             line = line.strip()
-            line = re.sub('\s+', ';', line)
+            line = re.sub(r'\s+', ';', line)
             i, j = map(int, line.split(";")[1:3])
             return i, j
 
@@ -322,7 +322,7 @@ class AffRender(object):
         """ Get representativeness of current model """
         try:
             # try to parse filename like frameXXXX_aff_YY.pdb
-            num = re.search('aff_(\d+)', model).groups()[0]
+            num = re.search(r'aff_(\d+)', model).groups()[0]
         except:
             # if no, set default num
             raise(Exception("Unable to get num from filename"))

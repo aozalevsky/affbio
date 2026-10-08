@@ -1,4 +1,6 @@
 import os
+import subprocess
+import sys
 import warnings
 
 import MDAnalysis as mda
@@ -19,3 +21,10 @@ def split_frames(top, trj, outdir, stop=None):
             u.atoms.write(path)
             paths.append(path)
     return paths
+
+
+def run_affbio(args, cwd, env=None, launcher=()):
+    """Run `affbio ARGS` (optionally under an MPI launcher) in cwd."""
+    cmd = list(launcher) + [sys.executable, '-m', 'affbio.cli'] + list(args)
+    return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True,
+                          text=True)

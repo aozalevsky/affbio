@@ -139,7 +139,7 @@ def render_b_factor(
 
         g_rmsf = subprocess.Popen(call, stdin=subprocess.PIPE)
         # Pass index group 0 to gromacs
-        g_rmsf.communicate(input='0')
+        g_rmsf.communicate(input=b'0')
         g_rmsf.wait()
         os.remove(TMxvg)
         os.remove(TMtrj)
@@ -152,15 +152,16 @@ def render_b_factor(
 
     AffRender(**kwargs)
 
-    map(os.remove, centers)
+    for c in centers:
+        os.remove(c)
 
 
 def copy_connects(src, dst):
     with open(src, 'r') as fin, open(dst, 'r') as fout:
         inpdb = np.array(fin.readlines())
         ind = np.array(
-            map(lambda x: re.match('CONECT', x), inpdb),
-            dtype=np.bool)
+            [bool(re.match('CONECT', x)) for x in inpdb],
+            dtype=bool)
         con = inpdb[ind]
 
         outpdb = fout.readlines()
