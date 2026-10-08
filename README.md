@@ -35,7 +35,7 @@ installing AffBio.
 Debian/Ubuntu:
 
 ```
-sudo apt install openmpi-bin libopenmpi-dev libhdf5-openmpi-dev
+sudo apt install python3-dev openmpi-bin libopenmpi-dev libhdf5-openmpi-dev
 pip install mpi4py
 CC=mpicc HDF5_MPI=ON HDF5_DIR=/usr/lib/x86_64-linux-gnu/hdf5/openmpi \
     pip install --no-binary=h5py h5py
@@ -45,7 +45,7 @@ pip install "affbio[mpi]"
 Fedora:
 
 ```
-sudo dnf install openmpi-devel hdf5-openmpi-devel
+sudo dnf install python3-devel openmpi-devel hdf5-openmpi-devel
 export PATH=/usr/lib64/openmpi/bin:$PATH
 pip install mpi4py
 CC=mpicc HDF5_MPI=ON HDF5_INCLUDEDIR=/usr/include/openmpi-x86_64 \
