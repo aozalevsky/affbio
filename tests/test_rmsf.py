@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 import h5py
 import MDAnalysis as mda
 import numpy as np
@@ -120,3 +123,22 @@ def test_cluster_to_trj_needs_index(small_run):
     with pytest.raises(AffBioError, match='--index'):
         cluster_to_trj(str(small_run / 'm.hdf5'), output='x.pdb',
                        mpi=init_mpi())
+
+
+# cluster_bfactors under a low open-file limit (argv: out, members...)
+LOW_FILE_LIMIT = (
+    "import resource, sys; "
+    "hard = resource.getrlimit(resource.RLIMIT_NOFILE)[1]; "
+    "resource.setrlimit(resource.RLIMIT_NOFILE, (64, hard)); "
+    "from affbio.rmsf import cluster_bfactors; "
+    "files = sys.argv[2:]; "
+    "cluster_bfactors(files[0], files, sys.argv[1])")
+
+
+def test_large_cluster_within_open_file_limit(tmp_path, adk_frames):
+    """Clusters can have far more members than files that may be open."""
+    out = tmp_path / 'out.pdb'
+    r = subprocess.run([sys.executable, '-c', LOW_FILE_LIMIT, str(out)]
+                       + adk_frames[:200], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2000:]
+    assert mda.Universe(str(out)).atoms.n_atoms == 214

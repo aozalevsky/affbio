@@ -28,6 +28,9 @@ import numpy as np
 
 import MDAnalysis as mda
 from MDAnalysis.analysis import align, rms
+from MDAnalysis.coordinates.memory import MemoryReader
+
+from .structures import read_coords
 
 # gmx rmsf -oq writes B = 8 pi^2 / 3 * RMSF^2
 BFACTOR = 8.0 * np.pi ** 2 / 3.0
@@ -43,7 +46,14 @@ def cluster_bfactors(center_pdb, member_pdbs, out_pdb):
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         ref = mda.Universe(center_pdb)
-        mobile = mda.Universe(center_pdb, list(member_pdbs))
+        # Read members one at a time: a cluster can have more members
+        # than files that may be open at once
+        n_atoms = ref.atoms.n_atoms
+        idx = np.arange(n_atoms)
+        coords = np.array([read_coords(f, n_atoms, idx)
+                           for f in member_pdbs], dtype=np.float32)
+        mobile = mda.Universe(center_pdb)
+        mobile.load_new(coords, format=MemoryReader)
 
     weights = 'mass'
     if np.any(ref.atoms.masses <= 0):
