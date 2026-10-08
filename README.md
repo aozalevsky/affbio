@@ -124,7 +124,8 @@ and warns about memory, before it starts.
 - Python 3 only; installs with pip, no compiler needed.
 - pyRMSD is replaced by built-in NumPy RMSD (same values, faster).
 - ProDy is replaced by MDAnalysis, so `--selection` uses MDAnalysis syntax:
-  `chain A` becomes `chainID A` and `within 5 of X` becomes `around 5 X`;
+  `chain A` becomes `chainID A` and `within 5 of X` becomes
+  `X or around 5 X` (MDAnalysis' `around` leaves X itself out);
   `all`, `protein`, `backbone`, `name CA`, `resname`, `resnum` and
   `and`/`or`/`not` work as before. MDAnalysis keeps every alternate
   location of an atom, ProDy kept only the first.
