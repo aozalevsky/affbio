@@ -168,9 +168,14 @@ def aff_cluster(
             tl = adjust_cache(tl, l)
             P.l = l
             P.ll = tl
-            # Out-of-memory mode keeps S and R of every process on disk
+            # Out-of-memory mode keeps S and R of every process on disk,
+            # and a single process also A and Rp in the working directory
+            needs = {tempfile.gettempdir(): 8 * l * N * NPROCS_LOCAL}
+            if NPROCS == 1:
+                cwd = os.getcwd()
+                needs[cwd] = needs.get(cwd, 0) + 8 * N * N
             try:
-                check_disk({tempfile.gettempdir(): 8 * l * N * NPROCS_LOCAL})
+                check_disk(needs)
             except AffBioError as e:
                 P.error = str(e)
         else:
@@ -203,12 +208,14 @@ def aff_cluster(
     tSl = np.zeros((N,), dtype=ft)
 
     disk = P.disk
+    # A and Rp live on disk when the matrix is split across processes
+    # or does not fit in memory
+    shared = NPROCS > 1 or disk
 
     if disk is True:
         TMLfd = tempfile.mkdtemp()
         TMLfn = osp(TMLfd, P.TMbfn + '_' + str(rank) + '.hdf5')
         TMLf = h5py.File(TMLfn, 'w')
-        TMLf.atomic = True
 
         S = TMLf.create_dataset('S', (l, N), dtype=ft)
         Ss = S.id.get_space()
@@ -285,7 +292,7 @@ def aff_cluster(
             else:
                 tRold = tR.copy()
 
-            if NPROCS > 1:
+            if shared:
                 As.select_hyperslab((i, 0), (ll, N))
                 A.id.read(ms, As, tAS)
             else:
@@ -313,7 +320,7 @@ def aff_cluster(
                 R.id.write(ms, Rs, tR)
                 # R[i, :] = tR
 
-            if NPROCS > 1:
+            if shared:
                 Rps.select_hyperslab((i, 0), (ll, N))
                 Rp.id.write(ms, Rps, tRp)
 
@@ -328,7 +335,7 @@ def aff_cluster(
         # Compute availabilities
         for j in range(tb, te, ll):
 
-            if NPROCS > 1 or disk is True:
+            if shared:
                 As.select_hyperslab((0, j), (N, ll))
 
             if disk is True:
@@ -336,7 +343,7 @@ def aff_cluster(
             else:
                 tAold = tA.copy()
 
-            if NPROCS > 1:
+            if shared:
                 Rps.select_hyperslab((0, j), (N, ll))
                 Rp.id.read(ms, Rps, tRpa)
             else:
@@ -357,7 +364,7 @@ def aff_cluster(
             for jl in range(ll):
                 tdA[j - tb + jl] = tA[j + jl, jl]
 
-            if NPROCS > 1:
+            if shared:
                 A.id.write(ms, As, tA)
 
         if rank == 0:
@@ -435,7 +442,7 @@ def aff_cluster(
         comm.Bcast([C, INT])
 
         for k in range(K):
-            if NPROCS > 1:
+            if shared:
                 ii = np.where(C == k)[0]
                 tN = ii.shape[0]
 

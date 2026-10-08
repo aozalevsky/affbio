@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import sys
 
 import h5py
 import numpy as np
@@ -99,3 +100,33 @@ def test_other_process_count_is_rejected(adk_frames, tmp_path):
     r = affbio(['-m', 'm.hdf5', '-t', 'prepare_matrix'], tmp_path, 3)
     assert r.returncode != 0
     assert 'prepared with 4 processes' in r.stderr
+
+
+# Report little free memory, then run the CLI (argv[1] = bytes available)
+LOW_MEMORY = ("import sys, types, psutil; "
+              "avail = float(sys.argv.pop(1)); "
+              "psutil.virtual_memory = "
+              "lambda: types.SimpleNamespace(available=avail); "
+              "from affbio.cli import run; run()")
+
+
+def test_out_of_memory_mode_matches(adk_frames, tmp_path):
+    prep = ['-m', 'm.hdf5', '-t', 'load_pdb', 'calc_rmsd', 'prepare_matrix',
+            'calc_median', 'set_preference', '-f'] + adk_frames[:240]
+    r = affbio(prep, tmp_path, 2)
+    assert r.returncode == 0, r.stdout + r.stderr
+    r = affbio(['-m', 'm.hdf5', '-t', 'aff_cluster'], tmp_path, 2)
+    assert r.returncode == 0, r.stdout + r.stderr
+    labels = tier1(tmp_path, 'aff_labels')
+    centers = tier1(tmp_path, 'aff_centers')
+
+    # 2 processes on this node, room for ~20 of each process' 120 rows
+    avail = 2 * 35.2 * 240 * 20.5
+    cmd = launcher(2) + [sys.executable, '-c', LOW_MEMORY, str(avail),
+                         '-m', 'm.hdf5', '-t', 'aff_cluster', '--verbose']
+    r = subprocess.run(cmd, cwd=tmp_path, env=ENV, capture_output=True,
+                       text=True, timeout=600)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert 'Cache size is 20 of 120' in r.stdout
+    assert np.array_equal(tier1(tmp_path, 'aff_labels'), labels)
+    assert np.array_equal(tier1(tmp_path, 'aff_centers'), centers)

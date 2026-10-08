@@ -1,7 +1,10 @@
+import types
+
 import h5py
 import numpy as np
 import pytest
 
+import affbio.aff_cluster
 from affbio.aff_cluster import aff_cluster, print_stat
 from affbio.checks import AffBioError
 from affbio.prepare import calc_median, prepare_cluster_matrix, \
@@ -80,3 +83,27 @@ def test_bad_damping(matrix, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     with pytest.raises(AffBioError, match='damping'):
         aff_cluster(sfn, mpi=mpi, damping=1.5)
+
+
+def test_out_of_memory_mode_matches(matrix, tmp_path, monkeypatch, capsys):
+    """When only part of the matrix fits in memory, AP keeps S and R on
+    disk; the result must not change."""
+    sfn, mpi = matrix
+    work = tmp_path / 'work'
+    work.mkdir()
+    monkeypatch.chdir(work)
+    aff_cluster(sfn, mpi=mpi)
+    with h5py.File(sfn, 'r') as f:
+        labels = f['tier1/aff_labels'][:]
+        centers = f['tier1/aff_centers'][:]
+
+    # room for ~15 of the 150 rows (aff_cluster needs 35.2 * N bytes/row)
+    monkeypatch.setattr(affbio.aff_cluster.psutil, 'virtual_memory',
+                        lambda: types.SimpleNamespace(
+                            available=35.2 * 150 * 15.5))
+    aff_cluster(sfn, mpi=mpi, verbose=True)
+    assert 'Cache size is 15 of 150' in capsys.readouterr().out
+    with h5py.File(sfn, 'r') as f:
+        assert np.array_equal(f['tier1/aff_labels'][:], labels)
+        assert np.array_equal(f['tier1/aff_centers'][:], centers)
+    assert list(work.iterdir()) == []
