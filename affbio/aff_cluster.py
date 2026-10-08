@@ -38,13 +38,13 @@ from os.path import join as osp
 import numpy as np
 import bottleneck as bn
 
-# MPI parallelism
-from mpi4py import MPI
-
 # H5PY for storage
 import h5py
 from h5py import h5s
 
+from .checks import AffBioError, check_decomposition, check_disk, \
+    check_stage, local_procs
+from .mpi import INT, FLOAT
 from .utils import Bunch, task
 
 
@@ -61,10 +61,7 @@ def aff_cluster(
 
     comm, NPROCS, rank = mpi
 
-    if 'OMPI_COMM_WORLD_LOCAL_SIZE' in os.environ:
-        NPROCS_LOCAL = int(os.environ['OMPI_COMM_WORLD_LOCAL_SIZE'])
-    else:
-        NPROCS_LOCAL = 1
+    NPROCS_LOCAL = local_procs()
 
     # Init storage for matrices
     # Get file name
@@ -81,13 +78,22 @@ def aff_cluster(
     SS = G['cluster']
     SSs = SS.id.get_space()
 
+    try:
+        check_decomposition(SS.shape[0], NPROCS)
+        check_stage('aff_cluster', SS.shape[0], NPROCS,
+                    stored_nprocs=SS.attrs.get('nprocs'))
+    except AffBioError:
+        Sf.close()
+        raise
+
     params = {
         'N': 0,
         'l': 0,
         'll': 0,
         'TMfn': '',
         'disk': False,
-        'preference': 0.0}
+        'preference': 0.0,
+        'error': None}
 
     P = Bunch(params)
 
@@ -97,51 +103,46 @@ def aff_cluster(
 
         N, N1 = SS.shape
 
-        if N != N1:
-            raise ValueError("S must be a square array \
-                (shape=%s)" % repr((N, N1)))
-        else:
-            P.N = N
-
         try:
-            preference = SS.attrs['preference']
-        except:
-            raise ValueError(
-                'Unable to get preference from cluster matrix')
+            if N != N1:
+                raise AffBioError("S must be a square array \
+                    (shape=%s)" % repr((N, N1)))
 
-        if max_iter < 0:
-            raise ValueError('max_iter must be > 0')
+            try:
+                preference = SS.attrs['preference']
+            except KeyError:
+                raise AffBioError(
+                    'Unable to get preference from cluster matrix')
 
-        if not 0 < conv_iter < max_iter:
-            raise ValueError('conv_iter must lie in \
-                interval between 0 and max_iter')
+            if max_iter < 0:
+                raise AffBioError('max_iter must be > 0')
 
-        if damping < 0.5 or damping >= 1.0:
-            raise ValueError('damping must lie in interval between 0.5 and 1')
+            if not 0 < conv_iter < max_iter:
+                raise AffBioError('conv_iter must lie in \
+                    interval between 0 and max_iter')
 
-        print '#' * 10, 'Main params', '#' * 10
-        print 'preference: %.3f' % preference
-        print 'damping: %.3f' % damping
-        print 'conv_iter: %d' % conv_iter
-        print 'max_iter: %d' % max_iter
-        print '#' * 31
+            if damping < 0.5 or damping >= 1.0:
+                raise AffBioError(
+                    'damping must lie in interval between 0.5 and 1')
+        except AffBioError as e:
+            P.error = str(e)
+
+    if rank == 0 and not P.error:
+
+        P.N = N
+
+        print('#' * 10, 'Main params', '#' * 10)
+        print('preference: %.3f' % preference)
+        print('damping: %.3f' % damping)
+        print('conv_iter: %d' % conv_iter)
+        print('max_iter: %d' % max_iter)
+        print('#' * 31)
 
         P.TMbfn = str(uuid.uuid1())
         P.TMfn = P.TMbfn + '.hdf5'
 
-        if NPROCS > 1:
-
-            # Magic 4 to fit MPI.Gather
-            r = N % (NPROCS * 4)
-        else:
-            r = 0
-
-        N -= r
+        # N is a multiple of 4 * NPROCS (checked above), as Gather needs
         l = N // NPROCS
-        if r > 0:
-            print 'Truncating matrix to %sx%s to fit on %d procs' \
-                % (N, N, NPROCS)
-        P.N = N
 
         # Fit to memory
         MEM = psutil.virtual_memory().available / NPROCS_LOCAL
@@ -161,26 +162,33 @@ def aff_cluster(
             try:
                 cache = 0
 #                cache = int(sys.argv[1])
-#                print sys.argv[1]
                 assert cache < l
             except:
                 cache = tl
-                # print 'Wrong cache settings, set cache to %d' % tl
             tl = adjust_cache(tl, l)
             P.l = l
             P.ll = tl
+            # Out-of-memory mode keeps S and R of every process on disk
+            try:
+                check_disk({tempfile.gettempdir(): 8 * l * N * NPROCS_LOCAL})
+            except AffBioError as e:
+                P.error = str(e)
         else:
             P.l = l
             P.ll = l
 
         if verbose:
-            print "Available memory per process: %.2fG" % (MEM / 10.0 ** 9)
-            print "Memory per row: %.2fM" % (ts / 10.0 ** 6)
-            print "Estimated memory per process: %.2fG" \
-                % (ts * P.ll / 10.0 ** 9)
-            print 'Cache size is %d of %d' % (P.ll, P.l)
+            print("Available memory per process: %.2fG" % (MEM / 10.0 ** 9))
+            print("Memory per row: %.2fM" % (ts / 10.0 ** 6))
+            print("Estimated memory per process: %.2fG"
+                  % (ts * P.ll / 10.0 ** 9))
+            print('Cache size is %d of %d' % (P.ll, P.l))
 
     P = comm.bcast(P)
+
+    if P.error:
+        Sf.close()
+        raise AffBioError(P.error)
 
     N = P.N
     l = P.l
@@ -262,7 +270,7 @@ def aff_cluster(
     for it in range(max_iter):
         if rank == 0:
             if verbose is True:
-                print '=' * 10 + 'It %d' % (it) + '=' * 10
+                print('=' * 10 + 'It %d' % (it) + '=' * 10)
                 tit = time.time()
 
         # Compute responsibilities
@@ -313,7 +321,7 @@ def aff_cluster(
         if rank == 0:
             if verbose is True:
                 teit1 = time.time()
-                print 'R T %s' % (teit1 - tit)
+                print('R T %s' % (teit1 - tit))
 
         comm.Barrier()
 
@@ -355,13 +363,13 @@ def aff_cluster(
         if rank == 0:
             if verbose is True:
                 teit2 = time.time()
-                print 'A T %s' % (teit2 - teit1)
+                print('A T %s' % (teit2 - teit1))
 
         ttE = np.array(((tdA + tdR) > 0), dtype=np.int8)
 
         if NPROCS > 1:
-            comm.Gather([ttE, MPI.INT], [tE, MPI.INT])
-            comm.Bcast([tE, MPI.INT])
+            comm.Gather([ttE, INT], [tE, INT])
+            comm.Bcast([tE, INT])
         else:
             tE = ttE
 
@@ -381,7 +389,7 @@ def aff_cluster(
                 else:
                     cK = 0
 
-                print 'Total K %d T %s%s' % (K, teit - tit, cc)
+                print('Total K %d T %s%s' % (K, teit - tit, cc))
 
         if it >= conv_iter:
 
@@ -407,8 +415,8 @@ def aff_cluster(
     if K > 0:
 
         I = np.nonzero(e[:, 0])[0]
-        C = np.zeros((N,), dtype=np.int)
-        tC = np.zeros((l,), dtype=np.int)
+        C = np.zeros((N,), dtype=np.int64)
+        tC = np.zeros((l,), dtype=np.int64)
 
         for i in range(l):
             if disk is True:
@@ -419,12 +427,12 @@ def aff_cluster(
 
             tC[i] = bn.nanargmax(tSl[I])
 
-        comm.Gather([tC, MPI.INT], [C, MPI.INT])
+        comm.Gather([tC, INT], [C, INT])
 
         if rank == 0:
             C[I] = np.arange(K)
 
-        comm.Bcast([C, MPI.INT])
+        comm.Bcast([C, INT])
 
         for k in range(K):
             if NPROCS > 1:
@@ -445,7 +453,7 @@ def aff_cluster(
                     ttI[j] = bn.nansum(tttI)
                     j += NPROCS
 
-                comm.Reduce([ttI, MPI.FLOAT], [tI, MPI.FLOAT])
+                comm.Reduce([ttI, FLOAT], [tI, FLOAT])
 
             else:
                 ii = np.where(C == k)[0]
@@ -455,7 +463,7 @@ def aff_cluster(
                 I[k] = ii[bn.nanargmax(tI)]
 
         I.sort()
-        comm.Bcast([I, MPI.INT])
+        comm.Bcast([I, INT])
 
         for i in range(l):
             if disk is True:
@@ -466,15 +474,10 @@ def aff_cluster(
 
             tC[i] = bn.nanargmax(tSl[I])
 
-        comm.Gather([tC, MPI.INT], [C, MPI.INT])
+        comm.Gather([tC, INT], [C, INT])
 
         if rank == 0:
             C[I] = np.arange(K)
-
-    else:
-        if rank == 0:
-            I = np.zeros(())
-            C = np.zeros(())
 
     # Cleanup
     Sf.close()
@@ -491,9 +494,9 @@ def aff_cluster(
         os.remove(P.TMfn)
 
         if verbose:
-            print 'APN: %d' % K
+            print('APN: %d' % K)
 
-        if I.size and C.size:
+        if K > 0:
 
             Sf = h5py.File(Sfn, 'r+', driver='sec2')
             Gn = 'tier%d' % tier
@@ -505,7 +508,7 @@ def aff_cluster(
             L = G.require_dataset(
                 'aff_labels',
                 shape=C.shape,
-                dtype=np.int)
+                dtype=np.int64)
 
             L[:] = C[:]
 
@@ -519,10 +522,13 @@ def aff_cluster(
                     ind = np.where(PL == i)
                     NL[ind] = C[i]
 
+                if 'aff_labels_merged' in G.keys():
+                    del G['aff_labels_merged']
+
                 LM = G.require_dataset(
                     'aff_labels_merged',
                     shape=PL.shape,
-                    dtype=np.int)
+                    dtype=np.int64)
 
                 LM[:] = NL[:]
 
@@ -532,9 +538,16 @@ def aff_cluster(
             CM = G.require_dataset(
                 'aff_centers',
                 shape=I.shape,
-                dtype=np.int)
+                dtype=np.int64)
             CM[:] = I[:]
             Sf.close()
+
+    # K is the same on every process
+    if K == 0:
+        raise AffBioError(
+            'Affinity propagation found no exemplars after %d iterations; '
+            'try a larger --max_iter or a different --preference/--factor.'
+            % max_iter)
 
 
 def print_stat(
@@ -553,19 +566,21 @@ def print_stat(
 
     Sf = h5py.File(Sfn, 'r', driver='sec2')
     Gn = 'tier%d' % tier
-    G = Sf.require_group(Gn)
+    G = Sf[Gn]
 
-    C = G['aff_centers']
-    NC = C.len()
+    C = G['aff_centers'][:]
+    NC = len(C)
 
-    I = G['aff_labels']
+    I = G['aff_labels'][:]
 
-    LC = G['labels']
-    L = G['labels']
+    LC = G['labels'].asstr()[:]
+    L = LC
     if tier > 1 and merged:
-        I = G['aff_labels_merged']
-        L = Sf['tier1']['labels']
-    NI = I.len()
+        I = G['aff_labels_merged'][:]
+        L = Sf['tier1']['labels'].asstr()[:]
+    NI = len(I)
+
+    Sf.close()
 
     with open('aff_centers.out', 'w') as f:
         for i in range(NC):

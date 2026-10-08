@@ -30,6 +30,9 @@ import numpy as np
 import h5py
 from h5py import h5s
 
+from .checks import AffBioError, check_decomposition, check_stage
+from .median import streaming_median
+
 
 def prepare_cluster_matrix(
         Sfn,
@@ -40,7 +43,8 @@ def prepare_cluster_matrix(
 
     def calc_chunk(l, tRM, tCM):
         ttCM = tRM + tCM * random_state.randn(l, l)
-        return ttCM
+        # transposed inputs may give a Fortran-ordered result
+        return np.ascontiguousarray(ttCM)
 
     def calc_chunk_diag(l, tRM, tCM):
         ttCM = tCM + tCM.transpose()
@@ -63,19 +67,21 @@ def prepare_cluster_matrix(
     RM = G['rmsd']
     RMs = RM.id.get_space()
 
-    N = RM.len()
-    l = N // NPROCS
+    N, N1 = RM.shape
 
-    if rank == 0:
-        N, N1 = RM.shape
-
+    try:
         if N != N1:
-            raise ValueError(
+            raise AffBioError(
                 "S must be a square array (shape=%s)" % repr(RM.shape))
+        check_decomposition(N, NPROCS)
+        check_stage('prepare_matrix', N, NPROCS,
+                    stored_chunk=RM.attrs['chunk'],
+                    stored_nprocs=RM.attrs.get('nprocs'))
+    except AffBioError:
+        Sf.close()
+        raise
 
-        if RM.attrs['chunk'] % l > 0:
-            raise ValueError(
-                "Wrong chunk size in RMSD matrix")
+    l = N // NPROCS
 
     CM = G.require_dataset(
         'cluster',
@@ -83,6 +89,7 @@ def prepare_cluster_matrix(
         dtype=np.float32,
         chunks=(l, l))
     CM.attrs['chunk'] = l
+    CM.attrs['nprocs'] = NPROCS
     CMs = CM.id.get_space()
 
     random_state = np.random.RandomState(0)
@@ -90,7 +97,7 @@ def prepare_cluster_matrix(
     y = np.finfo(np.float32).tiny * 100
 
     #Partiotioning
-    lN = (NPROCS + 1) * NPROCS / 2
+    lN = (NPROCS + 1) * NPROCS // 2
 
     m = lN // NPROCS
     mr = lN % NPROCS
@@ -134,7 +141,7 @@ def prepare_cluster_matrix(
         if rank == 0:
             teit = time.time()
             if verbose:
-                print "Step %d of %d T %s" % (c, m, teit - tit)
+                print("Step %d of %d T %s" % (c, m, teit - tit))
 
         if (rank - c) > 0:
             j = j - 1
@@ -162,12 +169,6 @@ def calc_median(
     if rank != 0:
         return
 
-    #Livestats for median
-    #from livestats import livestats
-    import pyximport
-    pyximport.install()
-    import lvc
-
     #Init cluster matrix
     #Open matrix file in single mode
     Sf = h5py.File(Sfn, 'r+', driver='sec2')
@@ -176,7 +177,6 @@ def calc_median(
     #Open table with data for clusterization
     CM = G['cluster']
 
-    N = CM.len()
     l = CM.attrs['chunk']
 
     N, N1 = CM.shape
@@ -189,24 +189,14 @@ def calc_median(
         raise ValueError(
             "Wrong chunk size in RMSD matrix")
 
-
     if N * N1 > 10000:
-    #Init calculations
-        #med = livestats.LiveStats()
-        med = lvc.Quantile(0.5)
-
-        for i in range(N):
-            #CMs.select_hyperslab((i, 0), (1, i - 1))
-            #CM.id.read(ms, CMs, tCM)
-            med.add(CM[i, :i])
-
-        #level, median = med.quantiles()[0]
-        median = med.quantile()
+        # Exact median of the lower triangle, streamed from disk
+        median = streaming_median(CM)
     else:
         median = np.median(CM[:])
 
     if verbose:
-        print 'Median: %f' % median
+        print('Median: %f' % median)
 
     CM.attrs['median'] = median
 
@@ -271,6 +261,6 @@ def set_preference(
     SS.attrs['preference'] = preference
 
     if verbose:
-        print 'Preference: %f' % preference
+        print('Preference: %f' % preference)
 
     Sf.close()
