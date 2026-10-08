@@ -33,6 +33,8 @@ Success means:
 | Image tiling/labels | Pillow replaces ImageMagick | Maintainer's choice; Pillow 10.1+ has a built-in scalable font, so no system fonts needed |
 | PyMOL | Optional extra `affbio[render]` = `pymol-open-source` (official, pre-release-only on PyPI; pip resolves `3.2.0a0` without flags) | Only `render` needs it. Official wheels cover 3.9-3.13; on 3.14 the README points to `pymol-open-source-whl` |
 | MPI | Optional extra `affbio[mpi]` = `mpi4py`; serial fallback when mpi4py is absent | PyPI h5py has no parallel HDF5, so parallel runs need extra setup anyway; single-process users should not need an MPI library |
+| Preflight checks | Validate structure count, process count, HDF5 chunk limit, stage compatibility and disk space before any work; warn on memory | Maintainer's request. At 200k structures a bad configuration otherwise fails hours in with a cryptic HDF5/MPI error |
+| Trimming under MPI | Trim N once at load to a multiple of 4*NPROCS and log dropped files | Today `load_pdb` trims to a multiple of NPROCS and `aff_cluster` again to 4*NPROCS, so a few structures sit in the matrix but never get a label |
 | Python | `requires-python >=3.10`, classifiers 3.10-3.14 | All core dependencies ship wheels for 3.10-3.14 |
 | Build system | Single PEP 621 `pyproject.toml`, setuptools backend, pure-Python wheel | No compiled code left in affbio |
 | Legacy dirs | `app/`, `old/`, `supplement/` stay untouched, excluded from the package | Kept for history |
@@ -99,6 +101,9 @@ Module by module, the issues found by reading the code:
     `MDAnalysis.coordinates.PDB.PDBReader(f).ts.positions[idx]`. A file whose
     atom count differs from the topology raises the existing
     `Broken structure` error. PBC check unchanged.
+  - Trimming: `load_pdb` and `load_from_previous_tier` (tier > 1) keep the
+    first `effective_n(N, NPROCS)` structures (component 7a) and log the
+    dropped files/centers on rank 0. Single-process runs drop nothing.
   - pyRMSD -> component 4. `calc_diag_chunk` writes the strict lower
     triangle of `rmsd_block(ic, ic)` and zeros elsewhere (as before);
     `calc_chunk` writes `rmsd_block(ic, jc)`. Storage stays float32; the
@@ -217,6 +222,59 @@ fall back to an unweighted fit and log a warning.
   cluster, vertical for stacking clusters. Pixel-identical output is not a
   goal; layout and transparency are.
 
+### 7a. Preflight checks (`affbio/checks.py`)
+
+Small pure functions plus one exception class, `AffBioError`.
+
+Limits found in the code:
+
+| Limit | Origin |
+|---|---|
+| `l = N // NPROCS <= 32,767` | `rmsd` and `cluster` use `(l, l)` float32 chunks; HDF5 caps a chunk at 4 GiB (2^32 - 1 bytes) |
+| `N >= 2` (serial), `N >= 4 * NPROCS` (MPI) | block split; `aff_cluster` needs N divisible by 4 * NPROCS |
+| process count compatible across stages | `prepare_matrix` reads the block layout written by `calc_rmsd` |
+| disk: 8 N^2 bytes in the `-m` file's directory (`rmsd` + `cluster`), 8 N^2 in the working directory (`aff_cluster` temp `Rp` + `A`), 8 N^2 in the temp dir if `aff_cluster` switches to its out-of-memory mode | dataset sizes |
+| memory per process: ~4 l^2 + 48 l natoms + 64 MiB (`calc_rmsd`), ~40 l^2 (`prepare_matrix`) | block buffers and temporaries |
+
+Functions:
+
+- `effective_n(n, nprocs)`: `n` if `nprocs == 1`, else `n - n % (4 * nprocs)`.
+- `check_decomposition(n, nprocs)`: raises `AffBioError` when there are too
+  few structures ("need at least 4 x P structures for P processes; use at
+  most N // 4 processes") or when `n // nprocs > 32767` ("the l x l float32
+  chunk would exceed HDF5's 4 GiB limit; use at least ceil(N / 32767)
+  processes").
+- `check_stage(stage, n, nprocs, stored_chunk=None, stored_nprocs=None)`:
+  `calc_rmsd` needs `n % nprocs == 0`; `prepare_matrix` needs
+  `n % nprocs == 0` and `stored_chunk % (n // nprocs) == 0`; `aff_cluster`
+  (P > 1) needs `n % (4 * nprocs) == 0`. On failure: "this file was prepared
+  with P0 processes; rerun this stage with P0 processes" (P0 from the
+  `nprocs` attribute that `load_pdb`, `calc_rmsd` and `prepare_matrix` now
+  store on `struct`, `rmsd` and `cluster`). Replaces the cryptic
+  "Wrong chunk size in RMSD matrix".
+- `check_disk(needs)`: `needs` maps a directory to bytes, counting only
+  datasets that do not exist yet; sums per filesystem and raises
+  `AffBioError` with "need X GiB in DIR, Y GiB free" if short.
+- `memory_warning(n, nprocs, natoms, stage)`: estimated peak per process x
+  processes on this node (`OMPI_COMM_WORLD_LOCAL_SIZE` or
+  `MPI_LOCALNRANKS`, else 1) vs `psutil.virtual_memory().available`;
+  returns a warning string or `None`. Warning only, since it is an
+  estimate.
+
+Where they run:
+
+- `cli.run()`, rank 0, after argument parsing and before any task: N from
+  the expanded file list (glob/natsort expansion moves to a helper shared
+  with `load_pdb`) or from the existing HDF5 tier; natoms from the topology
+  and selection. Runs `check_decomposition(effective_n(N, P), P)`,
+  `check_disk`, `memory_warning`. The result is broadcast; on error rank 0
+  prints the message (no traceback) and every rank exits with status 1.
+- Guards at the start of `calc_rmsd`, `prepare_matrix` and `aff_cluster`:
+  `check_decomposition` + `check_stage` from values every rank reads from
+  the HDF5 file, so all ranks stop together. `aff_cluster` calls
+  `check_disk` for the temp dir when it decides to use its out-of-memory
+  mode.
+
 ### 8. Test data (`tests/data/`)
 
 Source: "Molecular dynamics trajectory for benchmarking MDAnalysis",
@@ -250,10 +308,21 @@ temp dir once per session (the same snippet the README shows).
   `qcprot`; median and preference attributes present; 1 < clusters < N;
   every frame labeled; each exemplar is in its own cluster; `.out` files
   contain plain paths; a second run yields identical labels.
+- `test_checks.py`: `effective_n`; `check_decomposition` (serial N = 1 fails,
+  N = 2 passes; P = 4, N = 15 fails; N = 200,000 with P = 6 fails and
+  suggests 7, P = 7 passes); `check_stage` for each stage condition;
+  `check_disk` and `memory_warning` with `shutil.disk_usage` /
+  `psutil.virtual_memory` monkeypatched.
 - `test_mpi.py` (skipped unless mpi4py imports, `h5py.get_config().mpi`, and
-  `mpirun` is on PATH): `mpirun -n 4` on the first 1,040 frames (divisible
-  by NPROCS * 4, so no truncation) gives the same exemplars and labels as a
-  serial run on the same 1,040 frames.
+  `mpirun` is on PATH):
+  - for P in 2, 3, 4: the full lower triangle of the RMSD matrix equals a
+    serial run on the same frames (covers the block assignment for odd and
+    even P, untested today);
+  - P = 4 on the first 1,040 frames (no trimming) gives the same exemplars
+    and labels as a serial run on the same frames;
+  - P = 3 on 1,047 frames keeps 1,044 and logs the 3 dropped files;
+  - `calc_rmsd` with P = 4 followed by `prepare_matrix` with P = 3 stops with
+    the "prepared with 4 processes" message.
 - `test_rmsf.py`: `cluster_bfactors` on 50 AdK frames equals an independent
   NumPy computation (mass-weighted Kabsch fit + RMSF + 8*pi^2/3 factor);
   CONECT records are copied into files with and without `ENDMDL`.
@@ -262,7 +331,8 @@ temp dir once per session (the same snippet the README shows).
   `clusters.png` and `clusters_color.png` of the expected size.
 - `test_cli.py`: `affbio --help` exits 0 and lists all tasks; with mpi4py
   hidden, a run works serially, and with `OMPI_COMM_WORLD_SIZE` set it
-  exits with the launcher error.
+  exits with the launcher error; a run on a single PDB exits 1 with the
+  "need at least 2 structures" message and no traceback.
 
 ### 10. CI (`.github/workflows/tests.yml`)
 
@@ -302,9 +372,9 @@ No publishing workflow.
 
 - Algorithmic changes beyond the median, RMSD implementation and the
   `--noalign` fix.
-- Refactoring the MPI decomposition, the `MPI.INT` buffer typing, or the
-  HDF5 chunking (`(l, l)` chunks exceed HDF5's 4 GiB chunk limit for
-  serial runs with N > ~32,700; unchanged, documented).
+- Refactoring the MPI decomposition, the `MPI.INT` buffer typing, the HDF5
+  chunking, or the memory use of `prepare_matrix` (limits are now checked
+  up front, not lifted).
 - GPU RMSD.
 - conda-forge recipe for affbio.
 - Publishing to PyPI (prepared, uploaded only on explicit go).
@@ -327,5 +397,6 @@ No publishing workflow.
   `pip install --no-binary=mpi4py mpi4py` (the CI `mpi` job decides).
 - OpenMPI in CI containers may need `--oversubscribe` and
   `OMPI_ALLOW_RUN_AS_ROOT*`.
+- Memory estimates are approximate, so they only warn.
 - MPI vs serial results could differ by floating-point reduction order; if
   `test_mpi.py` shows this, investigate before relaxing the assertion.
