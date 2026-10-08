@@ -4673,7 +4673,7 @@ EOF
 
 - [ ] **Step 1: Build**
 
-Run: `rm -rf dist && uv build`
+Run: `rm -f dist/affbio-0.1.0.tar.gz dist/affbio-0.1.0-py3-none-any.whl && uv build`
 Expected: `dist/affbio-0.1.0.tar.gz` and `dist/affbio-0.1.0-py3-none-any.whl`.
 
 - [ ] **Step 2: Inspect the contents**
