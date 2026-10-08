@@ -217,9 +217,12 @@ class AffRender(object):
     def draw_nucleic_acid(self):
         self.pymol.cmd.hide("everything")
         self.pymol.cmd.show("lines")
-        # Atoms without bonds (C-alpha traces, coarse-grained models
-        # without CONECT records) are invisible as lines
-        self.pymol.cmd.show("nb_spheres")
+        # Structures without bonds (C-alpha traces, coarse-grained models
+        # without CONECT records) are invisible as lines: draw a tube
+        # through their atoms instead
+        if self.pymol.cmd.count_atoms("neighbor all") == 0:
+            self.pymol.cmd.set("cartoon_trace_atoms", 1)
+            self.pymol.cmd.show("cartoon")
         # self.pymol.cmd.show("cartoon")
         # self.pymol.cmd.set("cartoon_nucleic_acid_mode", 1)
         # self.pymol.cmd.set("cartoon_tube_radius", 0.1)
@@ -250,7 +253,8 @@ class AffRender(object):
 
     def ray(self, name, width=640, height=480):
         # pymol.cmd.zoom("all", 100)
-        self.pymol.cmd.zoom("all", 20)
+        # A small margin, so that the molecule fills the image
+        self.pymol.cmd.zoom("all", 2)
         self.pymol.cmd.ray(width, height)
         self.pymol.cmd.save(name)
 

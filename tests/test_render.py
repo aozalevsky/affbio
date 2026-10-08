@@ -54,11 +54,19 @@ def test_render_end_to_end(small_run, tmp_path):
         im = Image.open(tmp_path / name)
         # label (20% of width) + 3 poses per row, one row per cluster
         assert im.size == (32 + 3 * 160, 120 * k)
-        # every pose shows the molecule (C-alpha atoms have no bonds)
+        # every pose shows the molecule as a trace (C-alpha atoms have no
+        # bonds); the poses share one scale, and the largest view fills
+        # most of the image
         alpha = np.asarray(im)[..., 3]
         for row in range(k):
+            fills = []
             for pose in range(3):
                 x0 = 32 + pose * 160
-                tile = alpha[row * 120:(row + 1) * 120, x0:x0 + 160]
-                assert (tile > 0).sum() > 100, (name, row, pose)
+                tile = alpha[row * 120:(row + 1) * 120, x0:x0 + 160] > 0
+                assert tile.mean() > 0.02, (name, row, pose, tile.mean())
+                cols = np.nonzero(tile.any(axis=0))[0]
+                rows = np.nonzero(tile.any(axis=1))[0]
+                fills.append(max((cols.max() - cols.min() + 1) / 160,
+                                 (rows.max() - rows.min() + 1) / 120))
+            assert max(fills) > 0.55, (name, row, fills)
     assert not list(tmp_path.glob('cluster_*'))   # intermediates removed
