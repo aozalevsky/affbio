@@ -23,6 +23,7 @@
 # General modules
 import glob
 import time
+import warnings
 
 # H5PY for storage
 import h5py
@@ -31,16 +32,58 @@ from h5py import h5s
 # NumPy
 import numpy as np
 
-# pyRMSD for calculations
-import prody
-
-# pyRMSD for calculations
-import pyRMSD.RMSDCalculator
-from pyRMSD import condensedMatrix
+# MDAnalysis for reading structures
+import MDAnalysis as mda
+from MDAnalysis.coordinates.PDB import PDBReader
+from MDAnalysis.exceptions import SelectionError
 
 from natsort import natsorted
 
+from .checks import AffBioError, check_decomposition, check_stage, \
+    effective_n
+from .rmsd import rmsd_block
 from .utils import task
+
+# Rows of a diagonal block per RMSD call, so only its lower half is computed
+DIAG_ROWS = 256
+
+
+def expand_pdb_list(pdb_list):
+    """Expand a single quoted glob pattern into a naturally sorted list."""
+    if len(pdb_list) == 1:
+        ptrn = pdb_list[0]
+        if '*' in ptrn or '?' in ptrn:
+            return natsorted(glob.glob(ptrn))
+    return list(pdb_list)
+
+
+def selection_indices(topology, selection='all'):
+    """Atom count of the topology and indices of the selected atoms."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        u = mda.Universe(topology)
+    try:
+        sel = u.select_atoms(selection)
+    except (SelectionError, ValueError) as e:
+        raise AffBioError(
+            'Invalid --selection "%s": %s. AffBio uses MDAnalysis selection '
+            'syntax, e.g. "chainID A" instead of ProDy\'s "chain A".'
+            % (selection, e))
+    if sel.n_atoms == 0:
+        raise AffBioError('Empty selection "%s"' % selection)
+    return u.atoms.n_atoms, sel.indices
+
+
+def read_coords(fname, n_atoms, idx):
+    """Coordinates of the selected atoms in the first model of a PDB file."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        with PDBReader(fname) as reader:
+            ts = reader.ts
+            if ts.n_atoms != n_atoms:
+                raise ValueError('has %d atoms, the topology has %d'
+                                 % (ts.n_atoms, n_atoms))
+            return ts.positions[idx].astype(np.float64)
 
 
 def load_pdb_coords(
@@ -55,115 +98,74 @@ def load_pdb_coords(
         selection='all',
         *args, **kwargs):
 
-    def check_pbc(coords, threshold=10.0, selection='all'):
-        for i in range(len(coords) - 1):
-            assert np.linalg.norm(coords[i] - coords[i + 1]) < threshold
+    def check_pbc(coords, threshold=10.0):
+        dist = np.linalg.norm(np.diff(coords, axis=0), axis=1)
+        bad = np.nonzero(dist >= threshold)[0]
+        if bad.size:
+            i = bad[0]
+            raise ValueError('atoms %d and %d are %.1f A apart '
+                             '(PBC artifact?)' % (i, i + 1, dist[i]))
 
-    def parse_pdb(i, pbc=True, threshold=10.0, selection='all'):
+    def parse_pdb(fname, n_atoms, idx):
         """Parse PDB files"""
-        ps = prody.parsePDB(i)
-        pc_ = ps.select(selection)
-        if pc_ is None:
-            raise ValueError('Empty selection "%s"' % selection)
-
-        pc = pc_.getCoords()
+        coords = read_coords(fname, n_atoms, idx)
         if pbc:
-            check_pbc(pc, threshold)
-        return pc
+            check_pbc(coords, threshold)
+        return coords
 
-    def estimate_pdb_numatoms(
-            topology, pbc=True, threshold=10.0, selection='all'):
-
-        pdb_t = parse_pdb(
-            topology, pbc=pbc, threshold=threshold, selection=selection)
-
-        return pdb_t.shape
-
-    def estimate_coord_shape(
-            ftype='pdb',
-            pdb_list=None,
-            topology=None,
-            pbc=True,
-            threshold=10.0,
-            selection='all',
-            NPROCS=1,
-            ):
-
-        N = len(pdb_list)
-        r = N % NPROCS
-
-        if r > 0:
-            N = N - r
-            print('Truncating number to %d to fit %s procs' % (N, NPROCS))
-
-        if ftype == 'pdb':
-            if not topology:
-                topology = pdb_list[0]
-            na, nc = estimate_pdb_numatoms(
-                topology,
-                pbc=pbc,
-                threshold=threshold,
-                selection=selection)
-
-        shape = (N, na, nc)
-
-        return shape
-
-    def load_pdb_names(Sfn, pdb_list, topology=None, tier=1):
+    def load_pdb_names(Sfn, pdb_list, topology):
         N = len(pdb_list)
 
         Sf = h5py.File(Sfn, 'w', driver='sec2')
 
-        vls = h5py.special_dtype(vlen=str)
         Gn = 'tier%d' % tier
         G = Sf.require_group(Gn)
         L = G.create_dataset(
             'labels',
             (N,),
-            dtype=vls)
+            dtype=h5py.string_dtype())
 
-        L[:] = pdb_list[:]
-
-        if not topology:
-            topology = pdb_list[0]
-
+        L[:] = pdb_list
         L.attrs['topology'] = topology
 
         Sf.close()
 
-    def load_from_previous_tier(Sfn, tier):
+    def load_from_previous_tier(Sfn, tier, NPROCS):
         Sf = h5py.File(Sfn, 'r+', driver='sec2')
 
-        PGn = 'tier%d' % (tier - 1)
-        PG = Sf.require_group(PGn)
-
+        PG = Sf['tier%d' % (tier - 1)]
         PS = PG['struct']
         nstruct, natoms, ncoords = PS.shape
-        PNL = PG['labels']
+        PNL = PG['labels'].asstr()
 
         PC = PG['aff_centers'][:]
-        nstruct = PC.shape[0]
+        check_decomposition(len(PC), NPROCS)
+        nstruct = effective_n(len(PC), NPROCS)
+        if nstruct < len(PC):
+            print('Using %d of %d centers of tier %d to split evenly across '
+                  '%d processes; dropped: %s'
+                  % (nstruct, len(PC), tier - 1, NPROCS,
+                     ', '.join(PNL[c] for c in PC[nstruct:])))
 
         shape = (nstruct, natoms, ncoords)
         chunk = (1, natoms, ncoords)
 
-        Gn = 'tier%d' % tier
-        G = Sf.require_group(Gn)
+        G = Sf.require_group('tier%d' % tier)
         S = G.require_dataset(
             'struct',
             shape,
-            dtype=np.float,
+            dtype=np.float64,
             chunks=chunk)
+        S.attrs['nprocs'] = NPROCS
 
-        vls = h5py.special_dtype(vlen=str)
         L = G.require_dataset(
             'labels',
             (nstruct,),
-            dtype=vls)
+            dtype=h5py.string_dtype())
 
         for i in range(nstruct):
             S[i] = PS[PC[i]][:]
-            L[i] = PNL[PC[i]][:]
+            L[i] = PNL[PC[i]]
 
         Sf.close()
 
@@ -171,34 +173,29 @@ def load_pdb_coords(
 
     if tier > 1:
         if rank == 0:
-            load_from_previous_tier(Sfn, tier)
-            return
-        else:
-            return
+            load_from_previous_tier(Sfn, tier, NPROCS)
+        return
 
-    if len(pdb_list) == 1:
-        ptrn = pdb_list[0]
-        if '*' in ptrn or '?' in ptrn:
-            pdb_list = glob.glob(ptrn)
-            pdb_list = natsorted(pdb_list)
+    pdb_list = expand_pdb_list(pdb_list)
+    check_decomposition(len(pdb_list), NPROCS)
+    N = effective_n(len(pdb_list), NPROCS)
 
-    shape = None
+    if not topology:
+        topology = pdb_list[0]
+    n_atoms, idx = selection_indices(topology, selection)
+
+    shape = (N, len(idx), 3)
+    chunk = (1, len(idx), 3)
 
     if rank == 0:
-        shape = estimate_coord_shape(
-            pdb_list=pdb_list,
-            topology=topology,
-            pbc=pbc,
-            threshold=threshold,
-            selection=selection,
-            NPROCS=NPROCS)
+        if N < len(pdb_list):
+            print('Using %d of %d structures to split evenly across %d '
+                  'processes; dropped: %s'
+                  % (N, len(pdb_list), NPROCS, ', '.join(pdb_list[N:])))
+        load_pdb_names(Sfn, pdb_list[:N], topology)
 
-        N = shape[0]
-        load_pdb_names(Sfn, pdb_list[:N], topology=topology)
-
-    shape = comm.bcast(shape)
-    N = shape[0]
-    chunk = (1,) + shape[1:]
+    # Wait until the file exists
+    comm.Barrier()
 
     # Init storage for matrices
     # HDF5 file
@@ -213,26 +210,24 @@ def load_pdb_coords(
     S = G.require_dataset(
         'struct',
         shape,
-        dtype=np.float,
+        dtype=np.float64,
         chunks=chunk)
+    S.attrs['nprocs'] = NPROCS
 
     # A little bit of dark magic for faster io
     Ss = S.id.get_space()
-    tS = np.ndarray(chunk, dtype=np.float)
     ms = h5s.create_simple(chunk)
 
     tb, te = task(N, NPROCS, rank)
 
     for i in range(tb, te):
         try:
-            tS = parse_pdb(
-                pdb_list[i],
-                pbc=pbc, threshold=threshold, selection=selection)
+            tS = parse_pdb(pdb_list[i], n_atoms, idx)
+        except Exception as e:
+            raise AffBioError('Broken structure %s: %s' % (pdb_list[i], e))
 
-            if verbose:
-                print('Parsed %s' % pdb_list[i])
-        except:
-            raise ValueError('Broken structure %s' % pdb_list[i])
+        if verbose:
+            print('Parsed %s' % pdb_list[i])
 
         Ss.select_hyperslab((i, 0, 0), chunk)
         S.id.write(ms, Ss, tS)
@@ -251,43 +246,26 @@ def calc_rmsd_matrix(
         noalign=False,
         *args, **kwargs):
 
-    if noalign:
-        cl = 'NOSUP_SERIAL_CALCULATOR'
-    else:
-        cl = "KABSCH_SERIAL_CALCULATOR"
+    # --noalign compares raw coordinates: no centering, no rotation
+    superpose = not noalign
 
-    def calc_diag_chunk(ic, tS, cl):
-        calculator = pyRMSD.RMSDCalculator.RMSDCalculator(
-            cl,
-            ic)
-        rmsd = calculator.pairwiseRMSDMatrix()
-        rmsd_matrix = condensedMatrix.CondensedMatrix(rmsd)
-        ln = len(tS)
+    def calc_diag_chunk(ic, tS):
+        # Strict lower triangle only, DIAG_ROWS rows at a time
+        ln = len(ic)
+        for r0 in range(0, ln, DIAG_ROWS):
+            r1 = min(r0 + DIAG_ROWS, ln)
+            rmsd_block(ic[r0:r1], ic[:r1], superpose, out=tS[r0:r1, :r1])
         for i in range(ln):
-            for j in range(i):
-                tS[i, j] = rmsd_matrix[i, j]
+            tS[i, i:] = 0
 
-    def calc_chunk(ic, jc, tS, cl):
-        ln, n, d = ic.shape
-        ttS = np.zeros((ln + 1, n, d))
-        ttS[1:] = jc
-        for i in range(ln):
-            ttS[0] = ic[i]
-            calculator = pyRMSD.RMSDCalculator.RMSDCalculator(
-                cl,
-                ttS)
-            tS[i] = calculator.oneVsFollowing(0)
+    def calc_chunk(ic, jc, tS):
+        rmsd_block(ic, jc, superpose, out=tS)
 
     def partition(N, NPROCS, rank):
         # Partiotioning
         l = N // NPROCS
-        lr = N % NPROCS
 
-        if lr > 0 and rank == 0:
-            print('Truncating matrix to %dx%d to fit %d procs' % (
-                    l * NPROCS, l * NPROCS, NPROCS))
-
-        lN = (NPROCS + 1) * NPROCS / 2
+        lN = (NPROCS + 1) * NPROCS // 2
 
         m = lN // NPROCS
         mr = lN % NPROCS
@@ -311,6 +289,14 @@ def calc_rmsd_matrix(
     # Count number of structures
     N = S.len()
 
+    try:
+        check_decomposition(N, NPROCS)
+        check_stage('calc_rmsd', N, NPROCS,
+                    stored_nprocs=S.attrs.get('nprocs'))
+    except AffBioError:
+        Sf.close()
+        raise
+
     l, m = partition(N, NPROCS, rank)
 
     # HDF5 file
@@ -321,6 +307,7 @@ def calc_rmsd_matrix(
         dtype=np.float32,
         chunks=(l, l))
     RM.attrs['chunk'] = l
+    RM.attrs['nprocs'] = NPROCS
     RMs = RM.id.get_space()
 
     # Init calculations
@@ -336,9 +323,9 @@ def calc_rmsd_matrix(
             tit = time.time()
 
         if i == j:
-            calc_diag_chunk(ic, tS, cl)
+            calc_diag_chunk(ic, tS)
         else:
-            calc_chunk(ic, jc, tS, cl)
+            calc_chunk(ic, jc, tS)
 
         RMs.select_hyperslab((i * l, j * l), (l, l))
         RM.id.write(ms, RMs, tS)
