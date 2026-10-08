@@ -32,7 +32,7 @@ import h5py
 from affbio.utils import init_mpi, init_logging, finish_logging, dummy, \
     init_debug, finish_debug
 from affbio.checks import AffBioError, check_decomposition, check_disk, \
-    check_parallel_io, disk_needs, effective_n, memory_warning
+    check_parallel_io, check_stage, disk_needs, effective_n, memory_warning
 from affbio.structures import load_pdb_coords, calc_rmsd_matrix, \
     expand_pdb_list, selection_indices
 from affbio.prepare import prepare_cluster_matrix, calc_median, set_preference
@@ -270,6 +270,28 @@ def tier_size(sfn, tier, from_previous):
     return n, natoms, existing
 
 
+def stage_checks(sfn, tier, tasks, n, nprocs):
+    """Check that every requested matrix stage can split this file."""
+    with h5py.File(sfn, 'r') as f:
+        g = f['tier%d' % tier]
+        attrs = {name: dict(g[name].attrs)
+                 for name in ('struct', 'rmsd', 'cluster') if name in g}
+
+    if 'calc_rmsd' in tasks:
+        check_stage('calc_rmsd', n, nprocs,
+                    stored_nprocs=attrs['struct'].get('nprocs'))
+    if 'prepare_matrix' in tasks:
+        # a calc_rmsd in this run writes blocks that fit
+        rmsd = {} if 'calc_rmsd' in tasks else attrs.get('rmsd', {})
+        check_stage('prepare_matrix', n, nprocs,
+                    stored_chunk=rmsd.get('chunk'),
+                    stored_nprocs=rmsd.get('nprocs'))
+    if 'aff_cluster' in tasks:
+        cluster = {} if 'prepare_matrix' in tasks else attrs.get('cluster', {})
+        check_stage('aff_cluster', n, nprocs,
+                    stored_nprocs=cluster.get('nprocs'))
+
+
 def preflight(tasks, args, nprocs):
     """Check sizes, process count and disk space before any work.
 
@@ -294,9 +316,12 @@ def preflight(tasks, args, nprocs):
         n, natoms, existing = tier_size(sfn, tier, 'load_pdb' in tasks)
 
     check_decomposition(n, nprocs)
+    if 'load_pdb' not in tasks:
+        # load_pdb would make all stages fit; otherwise the file decides
+        stage_checks(sfn, tier, tasks, n, nprocs)
     n = effective_n(n, nprocs)
     overwrite = 'load_pdb' in tasks and tier == 1
-    check_disk(disk_needs(sfn, n, tasks, existing, overwrite))
+    check_disk(disk_needs(sfn, n, tasks, existing, overwrite, nprocs))
 
     warnings = []
     for stage in ('calc_rmsd', 'prepare_matrix'):

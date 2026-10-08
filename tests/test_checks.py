@@ -63,7 +63,7 @@ def test_disk_needs(tmp_path, monkeypatch):
     n = 1000
     needs = disk_needs(str(tmp_path / 'm.hdf5'), n,
                        ['load_pdb', 'calc_rmsd', 'prepare_matrix',
-                        'aff_cluster'])
+                        'aff_cluster'], nprocs=2)
     # rmsd + cluster next to the file, Rp + A in the working directory
     assert needs == {str(tmp_path): 4 * 4 * n * n}
 
@@ -118,3 +118,27 @@ def test_parallel_io():
     check_parallel_io(4, True)
     with pytest.raises(AffBioError, match='h5py built with MPI'):
         check_parallel_io(4, False)
+
+
+def test_stage_message_explains_the_rule():
+    # loaded serially (30 structures), now clustering on 3 processes
+    with pytest.raises(AffBioError) as e:
+        check_stage('aff_cluster', 30, 3, stored_nprocs=3)
+    message = str(e.value)
+    assert 'must be a multiple of 12' in message
+    assert 'rerun from load_pdb with 3 processes' in message
+    assert 'prepared with 3' not in message
+
+
+def test_disk_needs_serial_aff_cluster_needs_no_working_space(tmp_path,
+                                                             monkeypatch):
+    work = tmp_path / 'work'
+    work.mkdir()
+    monkeypatch.chdir(work)
+    sfn = str(tmp_path / 'm.hdf5')
+    # a single process keeps A and Rp in memory unless the matrix is too
+    # big, which aff_cluster checks itself
+    assert disk_needs(sfn, 100, ['aff_cluster'], nprocs=1).get(
+        str(work), 0) == 0
+    assert disk_needs(sfn, 100, ['aff_cluster'], nprocs=2)[str(work)] == \
+        8 * 100 * 100

@@ -78,18 +78,26 @@ def check_stage(stage, n, nprocs, stored_chunk=None, stored_nprocs=None):
         raise ValueError('Unknown stage %r' % stage)
 
     if not ok:
-        if stored_nprocs:
-            hint = ('this file was prepared with %d processes; rerun this '
-                    'stage with %d processes'
-                    % (stored_nprocs, stored_nprocs))
+        if stage == 'aff_cluster':
+            reason = ('the number of structures (%d) must be a multiple of '
+                      '%d (4 x processes)' % (n, 4 * nprocs))
+        elif n % nprocs:
+            reason = ('the number of structures (%d) must be a multiple of '
+                      'the number of processes' % n)
         else:
-            hint = 'rerun load_pdb with %d processes first' % nprocs
-        raise AffBioError(
-            '%s cannot split %d structures across %d processes: %s.'
-            % (stage, n, nprocs, hint))
+            reason = ('the RMSD matrix was computed in blocks for another '
+                      'number of processes')
+        if stored_nprocs and stored_nprocs != nprocs:
+            hint = ('this file was prepared with %d processes; rerun this '
+                    'stage with %d processes, or rerun from load_pdb with %d'
+                    % (stored_nprocs, stored_nprocs, nprocs))
+        else:
+            hint = 'rerun from load_pdb with %d processes' % nprocs
+        raise AffBioError('%s cannot run on %d processes: %s; %s.'
+                          % (stage, nprocs, reason, hint))
 
 
-def disk_needs(sfn, n, tasks, existing=(), overwrite=False):
+def disk_needs(sfn, n, tasks, existing=(), overwrite=False, nprocs=1):
     """Bytes each directory still has to hold for the requested tasks."""
     matrix = 4 * n * n  # one float32 N x N dataset
     sdir = os.path.dirname(os.path.abspath(sfn))
@@ -98,8 +106,10 @@ def disk_needs(sfn, n, tasks, existing=(), overwrite=False):
         needs[sdir] += matrix
     if 'prepare_matrix' in tasks and 'cluster' not in existing:
         needs[sdir] += matrix
-    if 'aff_cluster' in tasks:
+    if 'aff_cluster' in tasks and nprocs > 1:
         # aff_cluster keeps two more N x N matrices in the working directory
+        # (a single process only does so when they do not fit in memory,
+        # which aff_cluster checks itself)
         cwd = os.getcwd()
         needs[cwd] = needs.get(cwd, 0) + 2 * matrix
     if overwrite and os.path.exists(sfn):

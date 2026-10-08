@@ -161,3 +161,15 @@ def test_unexpected_preflight_error_does_not_hang(adk_frames, tmp_path):
     code, out, err = run_or_kill(cmd, tmp_path)
     assert code != 0
     assert 'boom' in err
+
+
+def test_incompatible_stages_rejected_before_any_work(adk_frames, tmp_path):
+    r = affbio(['-m', 'm.hdf5', '-t', 'load_pdb', '-f'] + adk_frames[:30],
+               tmp_path)
+    assert r.returncode == 0, r.stderr
+    r = affbio(['-m', 'm.hdf5', '-t', 'calc_rmsd', 'prepare_matrix',
+                'calc_median', 'set_preference', 'aff_cluster'], tmp_path, 3)
+    assert r.returncode != 0
+    assert 'must be a multiple of 12' in r.stderr
+    with h5py.File(tmp_path / 'm.hdf5', 'r') as f:
+        assert 'rmsd' not in f['tier1']
