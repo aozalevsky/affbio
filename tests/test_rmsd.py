@@ -67,3 +67,40 @@ def test_tiles_and_out(monkeypatch):
 def test_single_atom_structures():
     A = np.array([[[1.0, 2.0, 3.0]], [[4.0, 5.0, 6.0]]])
     assert np.all(rmsd_block(A, A) == 0)
+
+
+def svd_reference(a, b):
+    """Kabsch RMSD from the singular values of the covariance matrix."""
+    a = a - a.mean(0)
+    b = b - b.mean(0)
+    M = a.T @ b
+    s = np.linalg.svd(M, compute_uv=False)
+    d = np.sign(np.linalg.det(M))
+    msd = ((a ** 2).sum() + (b ** 2).sum()
+           - 2 * (s[0] + s[1] + d * s[2])) / len(a)
+    return np.sqrt(max(msd, 0.0))
+
+
+def random_poses(X, seed):
+    rng = np.random.default_rng(seed)
+    rot = np.linalg.qr(rng.normal(size=(len(X), 3, 3)))[0]
+    rot *= np.sign(np.linalg.det(rot))[:, None, None]
+    return np.einsum('kij,knj->kni', rot, X) + rng.normal(0, 10, (len(X), 1, 3))
+
+
+def test_two_atom_structures():
+    """Collinear structures make the largest eigenvalue of K degenerate."""
+    rng = np.random.default_rng(5)
+    a = rng.normal(0, 3, (300, 2, 3))
+    b = random_poses(a, 6)          # same structures, new poses
+    assert np.diag(rmsd_block(a, b)).max() < 1e-5
+    ref = np.array([[svd_reference(x, y) for y in b[:40]] for x in a[:40]])
+    np.testing.assert_allclose(rmsd_block(a[:40], b[:40]), ref, atol=1e-6)
+
+
+def test_near_collinear_chains():
+    rng = np.random.default_rng(7)
+    line = np.linspace(0, 30, 20)[:, None] * np.array([1.0, 0.0, 0.0])
+    E = random_poses(line[None] + rng.normal(0, 1e-3, (12, 20, 3)), 8)
+    ref = np.array([[svd_reference(x, y) for y in E] for x in E])
+    np.testing.assert_allclose(rmsd_block(E, E), ref, atol=1e-6)

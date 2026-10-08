@@ -126,7 +126,21 @@ def _qcp_msd(A, B, ga, gb):
         dp = 2.0 * (2.0 * x2 + c2) * x + c1
         step = np.divide(p, dp, out=np.zeros_like(p), where=dp != 0)
         x -= step
-        if np.abs(step).max() <= 1e-11 * np.abs(x).max():
+        done = np.abs(step) <= 1e-12 * np.abs(x)
+        if done.all():
             break
+
+    # Near a multiple largest root (collinear or nearly collinear
+    # structures) Newton is unreliable: use the exact eigenvalue instead.
+    # The largest root is at least s1 >= ||M||_F / sqrt(3) = sqrt(-c2 / 6).
+    x2 = x * x
+    dp = 2.0 * (2.0 * x2 + c2) * x + c1
+    bad = (~done | (dp <= 1e-6 * np.abs(x) ** 3)
+           | (x < np.sqrt(-c2 / 6.0) * (1.0 - 1e-10)))
+    if bad.any():
+        rows = ((k00, k01, k02, k03), (k01, k11, k12, k13),
+                (k02, k12, k22, k23), (k03, k13, k23, k33))
+        K = np.array([[k[bad] for k in row] for row in rows])
+        x[bad] = np.linalg.eigvalsh(K.transpose(2, 0, 1))[:, -1]
 
     return 2.0 * (e0 - x) / n
