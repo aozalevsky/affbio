@@ -125,6 +125,9 @@ def prepared(tmp_path, adk_frames):
     ('render', 'run aff_cluster first'),
 ])
 def test_missing_inputs_are_explained(prepared, task, hint):
+    if task == 'render':
+        # without PyMOL, render stops at the PyMOL check first
+        pytest.importorskip('pymol2')
     r = run_affbio(['-m', 'm.hdf5', '-t', task], cwd=prepared)
     assert r.returncode == 1
     assert hint in r.stderr
