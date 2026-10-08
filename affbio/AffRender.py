@@ -30,6 +30,14 @@ from PIL import Image, ImageDraw, ImageFont
 from .checks import AffBioError
 
 
+def available_cpus():
+    """Cores this process may use (respects affinity and batch limits)."""
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:
+        return os.cpu_count() or 1
+
+
 class AffRender(object):
 
     def __init__(
@@ -106,6 +114,9 @@ class AffRender(object):
 
         # self.pymol.cmd.bg_color("white")
         self.pymol.cmd.set("opaque_background", 0)
+
+        # Ray-trace on every available core (PyMOL uses one by default)
+        self.pymol.cmd.set("max_threads", available_cpus())
 
     @staticmethod
     def tile(images, out, direction="h"):

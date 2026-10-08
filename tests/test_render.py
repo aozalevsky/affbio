@@ -1,3 +1,4 @@
+import os
 import shutil
 import sys
 
@@ -70,3 +71,15 @@ def test_render_end_to_end(small_run, tmp_path):
                                  (rows.max() - rows.min() + 1) / 120))
             assert max(fills) > 0.55, (name, row, fills)
     assert not list(tmp_path.glob('cluster_*'))   # intermediates removed
+
+
+def test_ray_tracing_uses_all_available_cores():
+    pytest.importorskip('pymol2')
+    renderer = AffRender.__new__(AffRender)   # skip rendering in __init__
+    renderer.pymol = AffRender.init_pymol()
+    try:
+        renderer.setup_scene()
+        threads = int(float(renderer.pymol.cmd.get('max_threads')))
+    finally:
+        renderer.pymol.stop()
+    assert threads == len(os.sched_getaffinity(0))
