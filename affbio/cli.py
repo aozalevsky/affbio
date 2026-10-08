@@ -38,9 +38,31 @@ from affbio.structures import load_pdb_coords, calc_rmsd_matrix, \
 from affbio.prepare import prepare_cluster_matrix, calc_median, set_preference
 from affbio.aff_cluster import aff_cluster, print_stat
 from affbio.misc import render_b_factor, cluster_to_trj
+from affbio.AffRender import require_pymol
 
 # Tasks that create or split the N x N matrices
 MATRIX_TASKS = ('load_pdb', 'calc_rmsd', 'prepare_matrix', 'aff_cluster')
+
+# What each task reads from its tier of the HDF5 file, and what it adds
+# ('cluster.median' is the 'median' attribute of the 'cluster' dataset)
+NEEDS = {
+    'calc_rmsd': ('struct',),
+    'prepare_matrix': ('rmsd',),
+    'calc_median': ('cluster',),
+    'set_preference': ('cluster', 'cluster.median'),
+    'aff_cluster': ('cluster', 'cluster.preference'),
+    'print_stat': ('aff_centers', 'aff_labels'),
+    'cluster_to_trj': ('aff_labels',),
+    'render': ('aff_centers', 'aff_labels'),
+}
+MAKES = OD([
+    ('load_pdb', ('struct', 'labels')),
+    ('calc_rmsd', ('rmsd',)),
+    ('prepare_matrix', ('cluster',)),
+    ('calc_median', ('cluster.median',)),
+    ('set_preference', ('cluster.preference',)),
+    ('aff_cluster', ('aff_centers', 'aff_labels', 'aff_labels_merged')),
+])
 
 
 def get_args(choices):
@@ -292,11 +314,54 @@ def stage_checks(sfn, tier, tasks, n, nprocs):
                     stored_nprocs=cluster.get('nprocs'))
 
 
+def existing_inputs(sfn, tier):
+    """Datasets (and cluster attributes) already in a tier of the file."""
+    if not os.path.exists(sfn):
+        return set()
+    try:
+        with h5py.File(sfn, 'r') as f:
+            g = f.get('tier%d' % tier)
+            if g is None:
+                return set()
+            names = set(g)
+            if 'cluster' in g:
+                names |= {'cluster.' + a for a in g['cluster'].attrs}
+            return names
+    except OSError as e:
+        raise AffBioError('Cannot read %s: %s' % (sfn, e))
+
+
+def check_inputs(tasks, args):
+    """Fail if a task needs data that neither the file nor an earlier task
+    of this run provides."""
+    tier = args['tier']
+    available = existing_inputs(args['Sfn'], tier)
+    for t in tasks:
+        if t == 'load_pdb':
+            available = set()   # load_pdb starts the tier afresh
+        needs = list(NEEDS.get(t, ()))
+        if t == 'set_preference' and args['preference']:
+            needs.remove('cluster.median')
+        if t in ('print_stat', 'cluster_to_trj', 'render') \
+                and tier > 1 and args['merged']:
+            needs.append('aff_labels_merged')
+        missing = [n for n in needs if n not in available]
+        if missing:
+            source = [m for m, made in MAKES.items() if missing[0] in made][0]
+            raise AffBioError(
+                '%s needs %s in tier %d of %s: run %s first.'
+                % (t, missing[0], tier, args['Sfn'], source))
+        available |= set(MAKES.get(t, ()))
+
+
 def preflight(tasks, args, nprocs):
-    """Check sizes, process count and disk space before any work.
+    """Check inputs, sizes, process count and disk space before any work.
 
     Returns a list of warnings; raises AffBioError on hard errors.
     """
+    if 'render' in tasks:
+        require_pymol()
+    check_inputs(tasks, args)
     if not set(tasks) & set(MATRIX_TASKS):
         return []
 

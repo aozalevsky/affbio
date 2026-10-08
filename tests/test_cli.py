@@ -1,8 +1,10 @@
 import os
+import shutil
 import subprocess
 import sys
 
 import h5py
+import pytest
 
 from affbio.cli import expand_tasks
 from helpers import run_affbio
@@ -51,7 +53,8 @@ def test_bad_selection_is_explained(tmp_path, adk_frames):
 def test_missing_matrix_file_is_explained(tmp_path):
     r = run_affbio(['-m', 'nothing.hdf5', '-t', 'calc_rmsd'], cwd=tmp_path)
     assert r.returncode == 1
-    assert 'run the earlier tasks first' in r.stderr
+    assert 'run load_pdb first' in r.stderr
+    assert 'Traceback' not in r.stderr
 
 
 def test_runs_without_mpi4py(tmp_path, adk_frames):
@@ -77,3 +80,65 @@ def test_unreadable_topology_is_explained(tmp_path, adk_frames):
     assert r.returncode == 1
     assert 'Cannot read topology' in r.stderr
     assert 'Traceback' not in r.stderr
+
+
+HIDE_PYMOL = ("import sys; sys.modules['pymol2'] = None; "
+              "from affbio.cli import run; run()")
+
+
+def run_without_pymol(args, cwd):
+    return subprocess.run([sys.executable, '-c', HIDE_PYMOL] + list(args),
+                          cwd=cwd, capture_output=True, text=True)
+
+
+def test_render_without_pymol_fails_before_any_work(small_run, tmp_path):
+    shutil.copy(small_run / 'm.hdf5', tmp_path / 'm.hdf5')
+    r = run_without_pymol(['-m', 'm.hdf5', '-t', 'render'], tmp_path)
+    assert r.returncode == 1
+    assert 'affbio[render]' in r.stderr
+    assert 'Traceback' not in r.stderr
+    assert sorted(p.name for p in tmp_path.iterdir()) == ['m.hdf5']
+
+
+def test_cluster_and_render_without_pymol_stops_up_front(adk_frames,
+                                                         tmp_path):
+    r = run_without_pymol(['-m', 'm.hdf5', '-t', 'cluster', 'render', '-f']
+                          + adk_frames[:20], tmp_path)
+    assert r.returncode == 1
+    assert 'affbio[render]' in r.stderr
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.fixture
+def prepared(tmp_path, adk_frames):
+    """m.hdf5 with RMSD and cluster matrices, but no median yet."""
+    r = run_affbio(['-m', 'm.hdf5', '-t', 'load_pdb', 'calc_rmsd',
+                    'prepare_matrix', '-f'] + adk_frames[:20], cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    return tmp_path
+
+
+@pytest.mark.parametrize('task, hint', [
+    ('set_preference', 'run calc_median first'),
+    ('aff_cluster', 'run set_preference first'),
+    ('print_stat', 'run aff_cluster first'),
+    ('render', 'run aff_cluster first'),
+])
+def test_missing_inputs_are_explained(prepared, task, hint):
+    r = run_affbio(['-m', 'm.hdf5', '-t', task], cwd=prepared)
+    assert r.returncode == 1
+    assert hint in r.stderr
+    assert 'Traceback' not in r.stderr
+
+
+def test_task_on_missing_file_is_explained(tmp_path):
+    r = run_affbio(['-m', 'nothing.hdf5', '-t', 'calc_median'], cwd=tmp_path)
+    assert r.returncode == 1
+    assert 'run prepare_matrix first' in r.stderr
+    assert 'Traceback' not in r.stderr
+
+
+def test_explicit_preference_needs_no_median(prepared):
+    r = run_affbio(['-m', 'm.hdf5', '-t', 'set_preference',
+                    '--preference', '-5'], cwd=prepared)
+    assert r.returncode == 0, r.stderr

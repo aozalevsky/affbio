@@ -182,11 +182,11 @@ def calc_median(
     N, N1 = CM.shape
 
     if N != N1:
-        raise ValueError(
+        raise AffBioError(
             "S must be a square array (shape=%s)" % repr(CM.shape))
 
     if l <= 0:
-        raise ValueError(
+        raise AffBioError(
             "Wrong chunk size in RMSD matrix")
 
     if N * N1 > 10000:
@@ -235,15 +235,16 @@ def set_preference(
     N, N1 = SS.shape
 
     if N != N1:
-        raise ValueError("S must be a square array \
+        raise AffBioError("S must be a square array \
             (shape=%s)" % repr((N, N1)))
 
     if not preference:
         try:
             preference = SS.attrs['median']
-        except:
-            raise ValueError(
-                'Unable to get preference from cluster matrix')
+        except KeyError:
+            raise AffBioError(
+                'Unable to get preference from cluster matrix; run '
+                'calc_median first or give --preference')
 
     preference = ft(preference * factor)
 

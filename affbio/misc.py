@@ -29,7 +29,7 @@ import numpy as np
 # H5PY for storage
 import h5py
 
-from .AffRender import AffRender
+from .AffRender import AffRender, require_pymol
 from .checks import AffBioError
 from .rmsf import cluster_bfactors
 
@@ -109,6 +109,9 @@ def render_b_factor(
     if rank != 0:
         return
 
+    # Fail before computing B-factors if PyMOL is missing
+    require_pymol()
+
     with h5py.File(Sfn, 'r', driver='sec2') as Sf:
         top = Sf['tier1']['labels'].attrs['topology']
         G = Sf['tier%d' % tier]
@@ -123,19 +126,21 @@ def render_b_factor(
 
     centers = []
 
-    for i in range(len(C)):
-        TMbfac = 'cluster_%d_bfac.pdb' % i
-        cluster_bfactors(LC[C[i]], L[I == i], TMbfac)
-        copy_connects(top, TMbfac)
-        centers.append(TMbfac)
+    try:
+        for i in range(len(C)):
+            TMbfac = 'cluster_%d_bfac.pdb' % i
+            centers.append(TMbfac)
+            cluster_bfactors(LC[C[i]], L[I == i], TMbfac)
+            copy_connects(top, TMbfac)
 
-    kwargs['pdb_list'] = centers
-    kwargs['nums'] = pcs
+        kwargs['pdb_list'] = centers
+        kwargs['nums'] = pcs
 
-    AffRender(**kwargs)
-
-    for c in centers:
-        os.remove(c)
+        AffRender(**kwargs)
+    finally:
+        for c in centers:
+            if os.path.exists(c):
+                os.remove(c)
 
 
 def copy_connects(src, dst):

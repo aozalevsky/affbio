@@ -30,6 +30,16 @@ from PIL import Image, ImageDraw, ImageFont
 from .checks import AffBioError
 
 
+def require_pymol():
+    """The pymol2 module, or a clear error if PyMOL is not installed."""
+    try:
+        import pymol2
+    except ImportError:
+        raise AffBioError(
+            "The render task needs PyMOL: pip install 'affbio[render]'")
+    return pymol2
+
+
 def available_cpus():
     """Cores this process may use (respects affinity and batch limits)."""
     try:
@@ -92,12 +102,7 @@ class AffRender(object):
 
     @staticmethod
     def init_pymol():
-        try:
-            import pymol2
-        except ImportError:
-            raise AffBioError(
-                "The render task needs PyMOL: pip install 'affbio[render]'")
-        session = pymol2.PyMOL()
+        session = require_pymol().PyMOL()
         session.start()
         return session
 
